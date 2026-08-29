@@ -127,6 +127,24 @@ act '{"type":{"selector":"textarea[name=q]","text":"second"},"agent":"'"$AGENT"'
 V=$(act '{"eval":"document.querySelector(\"[name=q]\").value","agent":"'"$AGENT"'"}')
 check "type replaces, does not append"  "$V" "d.get('result') == 'second'"
 
+# --- click, including a target below the fold -------------------------------
+# 🔴 `click` had no check at all until 0.8.1 — one of eleven command branches,
+#    entirely uncovered, while the suite reported 15 green. Removing the
+#    scroll-into-view step left everything passing.
+# 🔵 A button placed past the viewport is the case that step exists for: it is
+#    perfectly clickable, just not *yet* on screen. Without the scroll, playwright
+#    times out on something that was never broken.
+act '{"eval":"var b=document.createElement(\"button\"); b.id=\"wb_probe_btn\"; b.textContent=\"probe\"; b.style.cssText=\"position:absolute;top:9000px;left:10px\"; b.onclick=function(){window.__wbProbe=1;}; document.body.appendChild(b); \"ok\"","agent":"'"$AGENT"'"}' >/dev/null
+R=$(act '{"click":"#wb_probe_btn","agent":"'"$AGENT"'"}')
+check "click reaches a target below the fold" "$R" "any('wb_probe_btn' in s for s in d.get('done',[]))"
+
+V=$(act '{"eval":"String(window.__wbProbe)","agent":"'"$AGENT"'"}')
+check "the click actually fired the handler" "$V" "d.get('result') == '1'"
+
+# 🔵 And that it reports the element it hit, not the selector it was handed —
+#    a selector matching the wrong element still "succeeds" otherwise.
+check "click names what it hit"         "$R" "'->' in ' '.join(d.get('done',[]))"
+
 # --- a selector that matches nothing says so --------------------------------
 # 🔴 This used to surface as `locator.scrollIntoViewIfNeeded: Timeout 10000ms
 #    exceeded`, which reads as a slow page and sends you to look at load times.

@@ -35,7 +35,16 @@ trap restore EXIT
 #    passing. Count your occurrences before choosing count=1.
 MUTANTS=(
 "goto:timeout-recovery|s.replace(\"if (sameOrigin && landed.ready !== 'loading')\", \"if (false && sameOrigin && landed.ready !== 'loading')\", 1)"
-"click:scroll-first|s.replace('await el.scrollIntoViewIfNeeded({ timeout: 10000 });', '', 1)"
+# 🔴 EQUIVALENT — kept, but do not chase it. Removing this line changes no
+#    observable behaviour: playwright's own click() scrolls too, just inside its
+#    own timeout budget. The separate step exists so a long page does not eat the
+#    click's budget, which only shows up as a *timing* difference on a page slow
+#    enough to matter. Three checks were written for click in 0.8.1 and all three
+#    passed with the mutant in place — correctly, because nothing was broken.
+# 🔵 A mutation score is never 100%. Equivalent mutants are a known limit of the
+#    technique, not a gap in the suite. Naming which survivors are equivalent is
+#    the difference between "we have work to do" and "we do not know."
+"click:scroll-first[equivalent]|s.replace('await el.scrollIntoViewIfNeeded({ timeout: 10000 });', '', 1)"
 "type:clear-before|s.replace(\"await field.fill('', { timeout: 3000 });\", 'void 0;', 1)"
 "type:keystroke-delay|s.replace('Number(delay) || 25', '0', 1)"
 "press:chord-normalise|s.replace('k.toUpperCase()', 'k', 1)"
@@ -48,6 +57,7 @@ printf 'mutation coverage — %s mutants\n\n' "${#MUTANTS[@]}"
 
 CAUGHT=0
 SURVIVED=0
+EQUIV=0
 SURVIVORS=""
 
 for m in "${MUTANTS[@]}"; do
@@ -82,21 +92,46 @@ PY
   sleep 2
 
   if bash scripts/e2e.sh >/dev/null 2>&1; then
-    printf '  %-26s \033[31mSURVIVED\033[0m  no check noticed\n' "$name"
-    SURVIVED=$((SURVIVED+1)); SURVIVORS="$SURVIVORS $name"
+    case "$name" in
+      *'[equivalent]'*)
+        # 🔵 Expected to survive — see the note above its entry. Counting it as a
+        #    gap would understate the suite and send someone chasing a check that
+        #    cannot exist.
+        printf '  %-26s equivalent  survives by design\n' "$name"
+        EQUIV=$((EQUIV+1)) ;;
+      *)
+        printf '  %-26s \033[31mSURVIVED\033[0m  no check noticed\n' "$name"
+        SURVIVED=$((SURVIVED+1)); SURVIVORS="$SURVIVORS $name" ;;
+    esac
   else
-    printf '  %-26s caught\n' "$name"
-    CAUGHT=$((CAUGHT+1))
+    case "$name" in
+      *'[equivalent]'*)
+        # 🔴 An equivalent mutant that gets caught means the label is wrong, or the
+        #    code changed underneath it. Either way the table needs a look.
+        printf '  %-26s \033[31mCAUGHT\033[0m  labelled equivalent but a check fired — re-check the label\n' "$name"
+        CAUGHT=$((CAUGHT+1)) ;;
+      *)
+        printf '  %-26s caught\n' "$name"
+        CAUGHT=$((CAUGHT+1)) ;;
+    esac
   fi
 done
 
 restore
 trap - EXIT
 
-TOTAL=$((CAUGHT+SURVIVED))
-printf '\ncaught %s / %s\n' "$CAUGHT" "$TOTAL"
+# 🔴 Equivalent mutants are excluded from the denominator, not hidden. Leaving
+#    them in understates the suite; dropping them silently overstates it. Both
+#    numbers are printed so the reader can do either arithmetic.
+SCORED=$((CAUGHT+SURVIVED))
+printf '\ncaught %s / %s scored' "$CAUGHT" "$SCORED"
+[ "$EQUIV" -gt 0 ] && printf '   (+%s equivalent, excluded)' "$EQUIV"
+printf '\n'
+
 if [ -n "$SURVIVORS" ]; then
   printf '\nsurvivors —%s\n' "$SURVIVORS"
   printf '🔵 Each survivor is an uncovered branch, not a bug. Add a check or\n'
   printf '   say out loud that the branch is untested. Do not delete the mutant.\n'
+  printf '🔴 Before writing a check for one, confirm it is not equivalent: apply the\n'
+  printf '   mutant by hand and see whether anything observable changes at all.\n'
 fi

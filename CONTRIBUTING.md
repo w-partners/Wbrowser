@@ -102,14 +102,24 @@ functions we had just written a check for, so of course they went red. Disabling
 bash scripts/mutate.sh    # picks mutants from the code, one per act() branch
 ```
 
-Current score: **5 of 8 caught.** The three survivors are named in the output.
-They are not bugs — they are branches nothing covers:
+Current score: **5 of 7 scored, plus one equivalent excluded.** Survivors are
+named in the output. They are not bugs — they are branches nothing covers:
 
 ```
 goto:timeout-recovery   needs a deliberately slow page
-click:scroll-first      needs an element below the fold
 type:keystroke-delay    typing speed has no observable effect
 ```
+
+🔴 **Before writing a check for a survivor, confirm it is not *equivalent*.** Apply
+the mutant by hand and see whether anything observable changes at all. We skipped
+that step once and wrote three checks for `click:scroll-first` before noticing
+that removing the line changes nothing: playwright's `click()` scrolls on its own.
+The three checks were still worth having — `click` had no coverage whatsoever —
+but they were never going to kill that mutant.
+
+🔵 A mutation score is never 100%. Equivalent mutants are a limit of the technique,
+not a gap in the suite. They are excluded from the denominator and printed anyway,
+so you can do either arithmetic.
 
 🔵 A survivor is an invitation, not a defect. Add a check or say out loud that the
 branch is untested — the one thing that does not help is deleting the mutant.

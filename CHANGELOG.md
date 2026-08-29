@@ -9,6 +9,54 @@ has the detail.
 
 ---
 
+## 0.8.1 — 2026-08-30
+
+### `click` had no test at all
+
+One of eleven command branches in `act()`, completely uncovered, while the suite
+reported 15 green. Three checks now cover it: that a click reaches a target
+**below the fold**, that it **actually fires the handler**, and that it reports
+the element it hit rather than the selector it was handed.
+
+```
+e2e   15 → 18 checks
+```
+
+### 🔴 And the mutant that led us there is *equivalent*
+
+`click:scroll-first` survived all three new checks — correctly. Removing the
+`scrollIntoViewIfNeeded` line changes no observable behaviour: playwright's own
+`click()` scrolls too, inside its own timeout budget. The separate step exists so
+a long page does not eat the click's budget, which shows up as a **timing**
+difference on a page slow enough to matter — not as a pass or a fail.
+
+The code comment said so already. We wrote three checks before reading it.
+
+```
+before   caught 5 / 8
+after    caught 5 / 7 scored   (+1 equivalent, excluded)
+```
+
+🔵 **Equivalent mutants are excluded from the denominator, not hidden.** Leaving
+one in understates the suite; dropping it silently overstates it. `mutate.sh`
+prints both numbers so a reader can do either arithmetic, and labels which
+survivor is equivalent — the difference between *"we have work to do"* and
+*"we do not know."*
+
+🔴 A mutation score is never 100%. That is a property of the technique, not a gap.
+
+`mutate.sh` now also warns before you chase a survivor: **apply the mutant by hand
+first and check that anything observable changes at all.**
+
+### Still uncovered, still named
+
+```
+goto:timeout-recovery   needs a deliberately slow page
+type:keystroke-delay    typing speed has no observable effect
+```
+
+---
+
 ## 0.8.0 — 2026-08-29
 
 ### We measured our own tests, and the number was worse than we said
