@@ -90,9 +90,29 @@ on four platforms. If you want to extend the harness, that is where the value is
 
 **When you add a test, make it fail first.** A test that has never failed proves
 nothing about the code; it only proves it runs. Break the function on purpose,
-watch the test go red, then put it back. Both suites above were checked that way:
-flipping `wb type`'s default to `--fast` turns one test red, and truncating the
-text join turns three red.
+watch the test go red, then put it back.
+
+🔴 **But do not pick the mutation next to the test that watches it.** That proves
+the wiring — the switch is connected to the bulb — and says nothing about how many
+bulbs are in the room. Measured here: the first two mutations we tried were both
+functions we had just written a check for, so of course they went red. Disabling
+`goto`'s timeout-recovery branch, which no check aims at, left all 11 green.
+
+```bash
+bash scripts/mutate.sh    # picks mutants from the code, one per act() branch
+```
+
+Current score: **5 of 8 caught.** The three survivors are named in the output.
+They are not bugs — they are branches nothing covers:
+
+```
+goto:timeout-recovery   needs a deliberately slow page
+click:scroll-first      needs an element below the fold
+type:keystroke-delay    typing speed has no observable effect
+```
+
+🔵 A survivor is an invitation, not a defect. Add a check or say out loud that the
+branch is untested — the one thing that does not help is deleting the mutant.
 
 Syntax checks, if you want them without the whole suite:
 

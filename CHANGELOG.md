@@ -9,6 +9,65 @@ has the detail.
 
 ---
 
+## 0.8.0 — 2026-08-29
+
+### We measured our own tests, and the number was worse than we said
+
+0.6.0 and 0.7.0 both claimed the suites were verified "by breaking the code on
+purpose." That was true and it was not enough. **Both mutations we picked were
+functions we had just written a check for** — of course they went red. That
+proves the wiring, not the coverage: the switch is connected to the bulb, but it
+says nothing about how many bulbs are in the room.
+
+`scripts/mutate.sh` picks mutants from the **code** instead — one per command
+branch in `act()`, including the branches nothing tests.
+
+```
+first run   caught 2 / 8      ← the two we had bragged about
+now         caught 5 / 8      ← after adding four checks
+```
+
+The three survivors are named in the output and left there on purpose:
+
+```
+goto:timeout-recovery   needs a deliberately slow page
+click:scroll-first      needs an element below the fold
+type:keystroke-delay    typing speed has no observable effect
+```
+
+🔵 **A survivor is an uncovered branch, not a bug.** Printing them is the point —
+a suite that only reports what it caught reads as if it caught everything.
+
+### Four new end-to-end checks (11 → 15)
+
+Each closes a mutant that used to survive:
+
+- **`Control+a` then `Backspace` empties the field.** The old check only read the
+  log line, so reverting the chord-normalisation fix from 0.5.0 — the one that
+  made `Control+a` work at all — left it green. **Watching what a command reports
+  tells you the report is right.**
+- **Typing replaces instead of appending.** Without the clear step you get
+  `hello worldsecond` and the command still says it succeeded.
+- **`read` hides what the user cannot see.** A hidden input is injected and must
+  not appear in the list.
+
+### 🔴 The harness itself produced a false survivor
+
+`read:visible-filter` stayed green after its check was added. The mutant was
+replacing only the *first* of three `.filter(vis)` calls; the other two kept
+working. **The check was fine — the mutant was weak.** `mutate.sh` now warns about
+count=1 on repeated patterns, and skips cleanly when a pattern no longer matches
+rather than reporting a false catch.
+
+### 🔴 What is still true, and what was overstated
+
+`scripts/e2e.sh` has only ever run on one machine (WSL2). The "verified on four
+platforms" line in older notes refers to the **0.4.x manual pass** in August, not
+to this harness. CI still covers the unit tests on three OSes; the browser
+harness covers one.
+
+---
+
 ## 0.7.0 — 2026-08-28
 
 ### The browser is under test now: `bash scripts/e2e.sh`
@@ -21,6 +80,11 @@ behind but a throwaway profile.
 It covers what unit tests cannot reach: that `goto` lands, that `read` returns
 the real structure, that **`type` actually puts the whole string in the field**,
 that the tab carries the agent's label, and that `press` reports what it sent.
+
+> 🔴 **Corrected 2026-08-29.** The paragraph below overstates what was measured.
+> Both mutations were functions the checks were written for, so they were always
+> going to go red — that is wiring, not coverage. A real mutation run (added in
+> 0.8.0, `scripts/mutate.sh`) scores **5 of 8**. See that entry.
 
 Each check was verified by breaking the engine on purpose. Disabling the title
 stamp turns exactly one check red; removing the new selector guard turns exactly
@@ -80,6 +144,8 @@ They cover the layer between what you type and what the engine runs (`mkcmd.py`)
 and the helpers that decide where Chrome and its profile live (`launch.js`).
 Those are the parts that fail *quietly*: a wrong path does not crash, it uses the
 wrong directory and reports success.
+
+> 🔴 **Corrected 2026-08-29** — same overstatement as 0.7.0. See that entry.
 
 Each test was checked by breaking the code on purpose and watching it go red.
 Flipping `wb type`'s default to `--fast` turns one test red; truncating the text

@@ -105,10 +105,27 @@ check "read lists the search field"     "$R" "any(i.get('name')=='q' for i in d[
 #    message below exists to correct.
 check "read reports the real tag"       "$R" "any(i.get('name')=='q' and i['tag']=='textarea' for i in d['page']['inputs'])"
 
+# 🔴 read must list only what a person can actually see. Drop the visibility filter
+#    and hidden inputs flood the list — the caller then aims at a box that is not on
+#    screen and the click times out on something that was never broken. Measured
+#    2026-08-25 on X, where an aria-hidden duplicate of the composer read as len 1
+#    while the real one held 21 characters.
+# 🔵 Inject a hidden field and assert read does not offer it.
+act '{"eval":"var i=document.createElement(\"input\"); i.name=\"wb_hidden_probe\"; i.style.display=\"none\"; document.body.appendChild(i); \"ok\"","agent":"'"$AGENT"'"}' >/dev/null
+R=$(act '{"read":true,"agent":"'"$AGENT"'"}')
+check "read hides what the user cannot see" "$R" "not any(i.get('name')=='wb_hidden_probe' for i in d['page']['inputs'])"
+
 # --- type actually types ----------------------------------------------------
 act '{"type":{"selector":"textarea[name=q]","text":"hello world"},"agent":"'"$AGENT"'"}' >/dev/null
 V=$(act '{"eval":"document.querySelector(\"[name=q]\").value","agent":"'"$AGENT"'"}')
 check "type puts the whole string in"   "$V" "d.get('result') == 'hello world'"
+
+# 🔴 Typing into a field that already has text must replace it, not append. Without
+#    the clear step you get "hello worldsecond" and the command still reports success —
+#    the caller then submits a query nobody wrote.
+act '{"type":{"selector":"textarea[name=q]","text":"second"},"agent":"'"$AGENT"'"}' >/dev/null
+V=$(act '{"eval":"document.querySelector(\"[name=q]\").value","agent":"'"$AGENT"'"}')
+check "type replaces, does not append"  "$V" "d.get('result') == 'second'"
 
 # --- a selector that matches nothing says so --------------------------------
 # 🔴 This used to surface as `locator.scrollIntoViewIfNeeded: Timeout 10000ms
@@ -120,6 +137,23 @@ check "a bad selector says nothing matched" "$E" "'nothing on this page matches'
 # --- press ------------------------------------------------------------------
 R=$(act '{"press":"Escape","agent":"'"$AGENT"'"}')
 check "press reports what it sent"      "$R" "any('Escape' in s for s in d.get('done',[]))"
+
+# 🔴 Reporting is not doing. The check above passes even if the chord never reaches
+#    the page — `Escape` is a named key, so it survives any normalisation bug.
+#    Measured 2026-08-28 with scripts/mutate.sh: reverting the chord fix (the
+#    toUpperCase that makes `Control+a` work) left this suite fully green. A test
+#    that watches the log watches the log.
+# 🔵 So press a chord whose effect is visible: select-all then delete. If the chord
+#    is mangled, the field keeps its text and this fails.
+act '{"type":{"selector":"textarea[name=q]","text":"select me"},"agent":"'"$AGENT"'"}' >/dev/null
+act '{"press":"Control+a","agent":"'"$AGENT"'"}' >/dev/null
+act '{"press":"Backspace","agent":"'"$AGENT"'"}' >/dev/null
+V=$(act '{"eval":"document.querySelector(\"[name=q]\").value","agent":"'"$AGENT"'"}')
+check "Control+a then Backspace empties the field" "$V" "d.get('result') == ''"
+
+# 🔵 And that a lowercase chord is normalised — the actual bug from v0.5.0.
+R=$(act '{"press":"Control+a","agent":"'"$AGENT"'"}')
+check "a lowercase chord is normalised" "$R" "any('Control+A' in s for s in d.get('done',[]))"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
