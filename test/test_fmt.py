@@ -70,7 +70,7 @@ def test_body_text_is_shown_with_its_size():
     #    at least shows you the first half.
     body = "\n".join(f"paragraph {i}" for i in range(60))
     out = run({"done": ["read"], "page": {"url": "https://e.com", "text": body}})
-    assert f"text({len(body)} chars)" in out     # the real size, not the shown size
+    assert f"of {len(body)} chars" in out        # the real size, not the shown size
     assert "paragraph 0" in out                  # and you can see where it starts
     assert "…" in out                            # and that there is more
 
@@ -79,6 +79,17 @@ def test_short_body_text_is_shown_whole_without_an_ellipsis():
     out = run({"done": ["read"], "page": {"url": "https://e.com", "text": "all of it."}})
     assert "all of it." in out
     assert "…" not in out
+
+
+def test_the_header_alone_says_whether_you_are_seeing_all_of_it():
+    # 🔴 `links(50)` never has to answer this — a list is always a sample. Body text
+    #    is sometimes whole, so if both cases printed `text(N chars):` the shortened
+    #    one would give no sign it was shortened. That is the defect this section
+    #    exists to fix, so the header must carry it, not just the ellipsis below.
+    whole = run({"done": ["read"], "page": {"url": "u", "text": "short."}})
+    part = run({"done": ["read"], "page": {"url": "u", "text": "x\n" * 400}})
+    assert "chars, all)" in whole and " of " not in whole.split("text(")[1][:20]
+    assert " of " in part.split("text(")[1][:20]
 
 
 def test_no_body_text_prints_no_text_line():

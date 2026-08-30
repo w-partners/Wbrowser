@@ -5,6 +5,39 @@ has the detail.
 
 ---
 
+## 0.8.4 — 2026-08-31
+
+### The `text(…)` header now says whether you are seeing all of it
+
+`links(50)` never has to answer that question — a list is always a sample, so
+nobody wonders. Body text is different: sometimes the whole page fits, sometimes it
+doesn't, and 0.8.3 printed `text(N chars):` either way. The ellipsis below was the
+only tell. That is a smaller version of the defect 0.8.3 existed to fix, in the
+line we added to fix it.
+
+```
+text(29 of 349 chars):   ← shortened
+text(9 chars, all):      ← whole
+```
+
+### The mutation score for 0.8.2's `goto` checks — measured, and it is bad news
+
+That entry sat for a day saying the score was unverified because playwright could
+no longer attach to the e2e browser. It was verifiable the whole time: `Browser.close`
+over CDP shuts a browser down without going anywhere near a process name, and the
+run completed on a fresh one.
+
+```
+caught 5 / 7 scored   (+1 equivalent, excluded)
+survivors — goto:timeout-recovery · type:keystroke-delay
+```
+
+🔴 **`goto:timeout-recovery` survived** — the exact branch those two checks were
+written for. Turning the recovery off entirely leaves the suite green: both checks
+assert on the outcome (command finished, page usable), and a page that never needed
+recovering gives the same outcome. So "18 → 20 checks" bought two checks and zero
+covered branches. See the 0.8.2 entry, now corrected.
+
 ## 0.8.3 — 2026-08-31
 
 ### `read` never printed the page's text
@@ -88,14 +121,26 @@ the browser on the slow fixture and three `press` checks went red — not becaus
 `press` broke, but because the field they type into was no longer on screen. The
 goto block now returns the tab before moving on.
 
-🔴 **Still not re-scored, and shipping anyway — here is exactly what that means.**
-`mutate.sh` needs to attach playwright to the e2e browser, and this machine's
-headless Chrome has accumulated enough utility worlds that `connectOverCDP` no
-longer completes. Only a browser restart clears them, and that restart is not ours
-to make. So the two `goto` checks above are known to pass and are *not* known to
-catch anything; the suite-wide score in 0.8.0 (5 of 7 scored) has not been redone
-since. The `eval` fix in this release was mutation-checked directly — old code
-back, three tests red — because that one could be done without a browser.
+🔴 **Re-scored, and the checks do not catch it.** For a day this entry said the
+score was unverified because `connectOverCDP` could no longer attach to the e2e
+browser. It could be verified: `Browser.close` over CDP shuts that browser down
+without going near a process name, and the mutation run then completed on a fresh
+one. The result:
+
+```
+caught 5 / 7 scored   (+1 equivalent, excluded)
+survivors — goto:timeout-recovery · type:keystroke-delay
+```
+
+**`goto:timeout-recovery` survived** — the same branch the two checks above were
+written for. Disabling the recovery entirely leaves the suite green, because both
+checks assert on the *outcome* (the command finished, the page is usable) and a
+page that never needed recovering produces that outcome too. The fixture hangs an
+image, so `domcontentloaded` resolves on its own and the recovery path is never the
+reason the checks pass.
+
+🔵 So the honest reading of "18 → 20 checks" is: two more checks, zero more
+branches covered. That is worth writing down more than the number was.
 
 ---
 

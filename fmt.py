@@ -129,10 +129,20 @@ def main():
     text = (p.get("text") or "").strip()
     if text:
         head = text[:400]
-        print("  text(%d chars):" % len(text))
-        for line in head.splitlines()[:6]:
+        lines = head.splitlines()[:6]
+        shown = len("\n".join(lines))
+        # 🔴 The header has to answer "is this all of it?" on its own. `links(50)` never
+        #    needs to: a list is always a sample, so nobody wonders. Body text is
+        #    sometimes whole and sometimes not, and if both print `text(N chars):` then
+        #    the shortened one gives no sign it was shortened — which is the exact
+        #    defect this section was added to fix.
+        if shown < len(text):
+            print("  text(%d of %d chars):" % (shown, len(text)))
+        else:
+            print("  text(%d chars, all):" % len(text))
+        for line in lines:
             print("    %s" % line)
-        if len(text) > len(head) or len(head.splitlines()) > 6:
+        if shown < len(text):
             print("    … (wb eval 'document.body.innerText' for all of it)")
 
     return 0
