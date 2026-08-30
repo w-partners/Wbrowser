@@ -5,6 +5,37 @@ has the detail.
 
 ---
 
+## 0.8.3 — 2026-08-31
+
+### `read` never printed the page's text
+
+The engine has always sent up to 3000 characters of body text. Nothing printed it.
+So `read` on an article — the one kind of page whose entire content *is* its prose —
+came back with a title, a URL, and a list of links, as though the page had no words
+in it at all.
+
+This is the same defect as 0.8.2's and one notch worse. A cut at least shows you the
+first half; this showed you nothing and gave no sign there was anything to show.
+
+```
+read   title/url/links only → the same, plus:
+
+  text(4820 chars):
+    Whatever the page actually says, first few lines
+    …
+    … (wb eval 'document.body.innerText' for all of it)
+```
+
+🔵 It stays a glance. `read` exists to be skimmed, so the body is capped like the
+link and button lists are — **and, like them, prints its real size beside it**. That
+number is the whole point: you can see there is more, and the line below tells you
+how to get it. A short page prints whole with no ellipsis.
+
+🔵 We found this by taking someone else's summary of the last release. Ours was "we
+removed the 1200-character cap", and inside that frame a field that prints *nothing*
+is invisible. Theirs was **"if you shorten it, say how much there was"** — and one
+pass over `fmt.py` with that sentence turned this up. Same defect, different seat.
+
 ## 0.8.2 — 2026-08-31
 
 ### `eval` printed 1200 characters and let you believe that was all of it

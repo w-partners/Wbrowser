@@ -120,6 +120,21 @@ def main():
             else:
                 print("    - %s  (%s)" % (sel_of(x), hint))
 
+    # 🔴 The body text. The engine has always sent this and nothing printed it, so a
+    #    page whose whole point was its prose read as if it had none — worse than a
+    #    cut, because a cut at least shows you the first half.
+    #    We keep `read` a glance: the first few lines, with the character count beside
+    #    them so you can see there is more. `wb eval 'document.body.innerText'`
+    #    returns the rest.
+    text = (p.get("text") or "").strip()
+    if text:
+        head = text[:400]
+        print("  text(%d chars):" % len(text))
+        for line in head.splitlines()[:6]:
+            print("    %s" % line)
+        if len(text) > len(head) or len(head.splitlines()) > 6:
+            print("    … (wb eval 'document.body.innerText' for all of it)")
+
     return 0
 
 

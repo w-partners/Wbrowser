@@ -62,3 +62,25 @@ def test_page_summary_still_shortens_its_lists():
     }})
     assert "links(50)" in out                      # the real count is still reported
     assert out.count("    - l") == 8               # but only a few are listed
+
+
+def test_body_text_is_shown_with_its_size():
+    # 🔴 The regression: `read` printed nothing at all for the body, so a page whose
+    #    whole point was its prose looked like it had none. Worse than a cut — a cut
+    #    at least shows you the first half.
+    body = "\n".join(f"paragraph {i}" for i in range(60))
+    out = run({"done": ["read"], "page": {"url": "https://e.com", "text": body}})
+    assert f"text({len(body)} chars)" in out     # the real size, not the shown size
+    assert "paragraph 0" in out                  # and you can see where it starts
+    assert "…" in out                            # and that there is more
+
+
+def test_short_body_text_is_shown_whole_without_an_ellipsis():
+    out = run({"done": ["read"], "page": {"url": "https://e.com", "text": "all of it."}})
+    assert "all of it." in out
+    assert "…" not in out
+
+
+def test_no_body_text_prints_no_text_line():
+    out = run({"done": ["read"], "page": {"url": "https://e.com"}})
+    assert "text(" not in out
