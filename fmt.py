@@ -37,10 +37,15 @@ def main():
         print("· " + prefix + ", ".join(d["done"]))
 
     # eval result
+    # 🔴 Print it whole. `eval` returns the one value you asked for by name, which is a
+    #    different thing from the page summary below — there we cut lists short because
+    #    the point is a glance, here the value *is* the answer.
+    #    This used to stop at 1200 characters with nothing to say it had, so a query that
+    #    returned more looked like it had returned exactly that much. The data was never
+    #    missing: the engine sends the whole result and only this line dropped it.
     if "result" in d:
         v = d["result"]
-        print("  result:", json.dumps(v, ensure_ascii=False)[:1200]
-              if not isinstance(v, str) else v[:1200])
+        print("  result:", v if isinstance(v, str) else json.dumps(v, ensure_ascii=False))
     if d.get("evalError"):
         print("  ❌ execution error:", d["evalError"])
 

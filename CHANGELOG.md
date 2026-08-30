@@ -5,7 +5,35 @@ has the detail.
 
 ---
 
-## Unreleased
+## 0.8.2 — 2026-08-31
+
+### `eval` printed 1200 characters and let you believe that was all of it
+
+Ask the page for something long — the text of an article, a table you serialised,
+a list of every link — and you got the first 1200 characters. No ellipsis, no
+total, nothing. The value looked complete because there was no sign it wasn't.
+
+The data was never missing. The engine sends the whole result and always has; the
+cut was one line in `fmt.py`, the last place before the screen. Everything the
+user thought they were looking at was in the response they never saw.
+
+```
+eval result   1200 chars → whole value
+```
+
+🔵 The summary printed by `read` still shortens its lists on purpose, and that is
+the right call — it exists to be glanced at, so it caps links and buttons at eight
+and prints the real count beside them (`links(50)`). `eval` is the other thing
+entirely: you named the value you wanted, so the value *is* the answer. Those two
+had been treated the same.
+
+🔴 **The shape of this bug, not the size.** A tool that drops data loudly gets
+fixed; one that drops it silently sends you looking somewhere else. We wrote that
+down after `wb status` swallowed a `/health` diagnosis, and it was sitting in
+`eval` the whole time.
+
+`fmt.py` had no tests. It has five now, and they were checked the only way that
+means anything: putting the old `[:1200]` back turned three of them red.
 
 ### `goto` now has a test for the case it exists to handle
 
@@ -29,11 +57,14 @@ the browser on the slow fixture and three `press` checks went red — not becaus
 `press` broke, but because the field they type into was no longer on screen. The
 goto block now returns the tab before moving on.
 
-🔴 **Not yet re-scored.** `mutate.sh` could not run afterwards: this machine's
-headless Chrome has accumulated enough playwright utility worlds that
-`connectOverCDP` no longer completes, and only a browser restart clears them. The
-two checks above passed when they were written; the mutation score is unverified
-until the next run.
+🔴 **Still not re-scored, and shipping anyway — here is exactly what that means.**
+`mutate.sh` needs to attach playwright to the e2e browser, and this machine's
+headless Chrome has accumulated enough utility worlds that `connectOverCDP` no
+longer completes. Only a browser restart clears them, and that restart is not ours
+to make. So the two `goto` checks above are known to pass and are *not* known to
+catch anything; the suite-wide score in 0.8.0 (5 of 7 scored) has not been redone
+since. The `eval` fix in this release was mutation-checked directly — old code
+back, three tests red — because that one could be done without a browser.
 
 ---
 
