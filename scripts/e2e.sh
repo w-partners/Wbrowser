@@ -127,6 +127,21 @@ act '{"type":{"selector":"textarea[name=q]","text":"second"},"agent":"'"$AGENT"'
 V=$(act '{"eval":"document.querySelector(\"[name=q]\").value","agent":"'"$AGENT"'"}')
 check "type replaces, does not append"  "$V" "d.get('result') == 'second'"
 
+# 🔴 The keystrokes have to be spaced out. Sites that re-render as you type swallow
+#    input that arrives all at once — that is the whole reason `type` is not `fill`.
+#    Nothing about the final value shows it: set the delay to 0 and the field still
+#    ends up correct, which is why mutate.sh walked past every check that read
+#    `.value`. So watch the events instead.
+act '{"eval":"window.__wbGaps=[];window.__wbLast=0;document.querySelector(\"[name=q]\").addEventListener(\"keydown\",function(){var t=performance.now();if(window.__wbLast)window.__wbGaps.push(t-window.__wbLast);window.__wbLast=t;});\"ok\"","agent":"'"$AGENT"'"}' >/dev/null
+act '{"type":{"selector":"textarea[name=q]","text":"spaced out"},"agent":"'"$AGENT"'"}' >/dev/null
+V=$(act '{"eval":"JSON.stringify(window.__wbGaps)","agent":"'"$AGENT"'"}')
+#    🔴 The threshold is not "greater than zero". Measured 2026-08-31: with the delay
+#       set to 0 the gaps still come out around 14ms, because each keystroke is its own
+#       CDP round trip. A check at >10ms passes on the broken build. The real 25ms
+#       delay lands near 30ms, so the line goes between them.
+check "type spaces its keystrokes apart" "$V" \
+  "(lambda g: len(g) >= 5 and sorted(g)[len(g)//2] >= 22)(__import__('json').loads(d.get('result') or '[]'))"
+
 # --- click, including a target below the fold -------------------------------
 # 🔴 `click` had no check at all until 0.8.1 — one of eleven command branches,
 #    entirely uncovered, while the suite reported 15 green. Removing the
@@ -166,18 +181,33 @@ PORT_SLOW=7985
 node -e '
   const http = require("http");
   http.createServer((req, res) => {
-    if (req.url === "/hang.png") { res.writeHead(200, {"Content-Type": "image/png"}); return; }
+    // Getting this fixture right took five attempts, so the reasoning stays.
+    // The branch fires when goto times out and the page is still usable, so the
+    // fixture has to produce BOTH. Measured 2026-08-31, all on real Chrome:
+    //   hanging image / stylesheet / iframe  -> DCL fires in 30ms, goto never times out
+    //   a route that returns nothing at all  -> evaluate itself blocks, and rethrowing
+    //                                           is right: nothing came back
+    //   body streamed, response left open    -> goto times out, evaluate works, the
+    //                                           DOM is fully operable. This one.
+    // NOTE: inside a single-quoted shell string. No apostrophes.
     res.writeHead(200, {"Content-Type": "text/html"});
-    res.end("<!doctype html><html><body><h1>Slow Page</h1>"
-          + "<script>var i=new Image();i.src=\"/hang.png\";</script></body></html>");
+    res.write("<!doctype html><html><head><title>Slow</title></head><body>"
+            + "<h1>Slow Page</h1><p>usable</p>");
+    // no res.end() — the document never completes, but everything sent is live
   }).listen(process.env.PORT_SLOW || 7985, "127.0.0.1");
 ' PORT_SLOW="$PORT_SLOW" >/dev/null 2>&1 &
 sleep 2
 
 # 🔵 This one takes ~30s — the whole point is that goto hits its timeout.
 R=$(act '{"goto":"http://127.0.0.1:'"$PORT_SLOW"'/","read":true,"agent":"'"$AGENT"'"}')
-check "goto survives a page that never settles" "$R" "any('goto' in s for s in d.get('done',[]))"
-check "and the page is actually usable"         "$R" "d.get('page',{}).get('h1') == 'Slow Page'"
+# 🔴 Assert the recovery FIRED, not just that the command came back. `'goto' in done`
+#    passes either way — a page that never needed recovering says `goto <url>` too, so
+#    that check scored zero against mutate.sh while looking perfectly reasonable.
+#    The branch writes its own sentence; that sentence is the evidence.
+check "goto recovers a page that never completes" "$R" \
+  "any('still loading after 30s' in s for s in d.get('done',[]))"
+check "and the recovered page is usable"          "$R" "d.get('page',{}).get('h1') == 'Slow Page'"
+check "and the rest of the command still ran"     "$R" "d.get('page',{}).get('text')"
 
 # 🔵 By port, never by name.
 slow_pid=$(ss -ltnp 2>/dev/null | grep ":$PORT_SLOW " | grep -oP 'pid=\K[0-9]+' | head -1)

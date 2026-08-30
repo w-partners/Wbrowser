@@ -553,14 +553,26 @@ async function act(cmd) {
       done.push(`goto ${cmd.goto}`);
     } catch (e) {
       if (!/Timeout .* exceeded/i.test(e.message || '')) throw e;
+      // 🔴 Ask whether the page WORKS, not what phase it says it is in. `readyState`
+      //    is about bytes still arriving, not about whether you can use what arrived:
+      //    measured 2026-08-31 on a response that streams its body and stops — the
+      //    document reads `loading` forever, and a button appended to it still gets
+      //    created, clicked and fires its handler. Gating on `readyState !== 'loading'`
+      //    rejected pages that were fully operable.
+      //    The 3s race matters for the opposite case: when nothing at all came back,
+      //    `evaluate` never resolves, `landed` stays null, and we rethrow — correctly.
       const landed = await Promise.race([
-        page.evaluate(() => ({ href: location.href, ready: document.readyState })),
+        page.evaluate(() => ({
+          href: location.href,
+          ready: document.readyState,
+          usable: !!(document.body && document.body.childElementCount > 0),
+        })),
         new Promise((res) => { setTimeout(() => res(null), 3000); }),
       ]).catch(() => null);
       const sameOrigin = landed && (() => {
         try { return new URL(landed.href).origin === new URL(cmd.goto).origin; } catch { return false; }
       })();
-      if (sameOrigin && landed.ready !== 'loading') {
+      if (sameOrigin && landed.usable) {
         done.push(`goto ${cmd.goto} (still loading after 30s; page is usable)`);
       } else {
         throw e;

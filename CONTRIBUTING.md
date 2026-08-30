@@ -102,13 +102,21 @@ functions we had just written a check for, so of course they went red. Disabling
 bash scripts/mutate.sh    # picks mutants from the code, one per act() branch
 ```
 
-Current score: **5 of 7 scored, plus one equivalent excluded.** Survivors are
-named in the output. They are not bugs — they are branches nothing covers:
+Current score: **7 of 7 scored, plus one equivalent excluded.** Survivors, when
+there are any, are named in the output. They are not bugs — they are branches
+nothing covers, and the fix is a check, not a code change.
 
-```
-goto:timeout-recovery   needs a deliberately slow page
-type:keystroke-delay    typing speed has no observable effect
-```
+🔵 Both of the survivors this file used to list are dead, and each taught something
+worth repeating:
+
+- `goto:timeout-recovery` — the check asserted the *outcome* (`'goto' in done`),
+  which a page that never needed recovering produces too. A check can read
+  perfectly sensibly and still assert nothing. Assert the thing only that branch
+  does: it writes its own sentence, so match on that.
+- `type:keystroke-delay` — no assertion on the field's value can see this; set the
+  delay to zero and the text still arrives correctly. Watch `keydown` timing. And
+  pick the threshold by measuring both builds: at delay 0 the gaps are still ~14ms
+  from CDP round trips alone, so a check at ">10ms" passes on the broken one.
 
 🔴 **Before writing a check for a survivor, confirm it is not *equivalent*.** Apply
 the mutant by hand and see whether anything observable changes at all. We skipped

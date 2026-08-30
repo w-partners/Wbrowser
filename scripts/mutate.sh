@@ -34,7 +34,7 @@ trap restore EXIT
 #    `.filter(vis)` appears three times in summarize(); replacing one left the check
 #    passing. Count your occurrences before choosing count=1.
 MUTANTS=(
-"goto:timeout-recovery|s.replace(\"if (sameOrigin && landed.ready !== 'loading')\", \"if (false && sameOrigin && landed.ready !== 'loading')\", 1)"
+"goto:timeout-recovery|s.replace('if (sameOrigin && landed.usable) {', 'if (false) {', 1)"
 # 🔴 EQUIVALENT — kept, but do not chase it. Removing this line changes no
 #    observable behaviour: playwright's own click() scrolls too, just inside its
 #    own timeout budget. The separate step exists so a long page does not eat the

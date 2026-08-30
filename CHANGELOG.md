@@ -5,6 +5,56 @@ has the detail.
 
 ---
 
+## 0.9.0 — 2026-08-31
+
+### `goto` was rejecting pages that worked
+
+On a timeout, `goto` asked the page whether it was still `loading` and gave up if it
+was. That is the wrong question. `readyState` describes whether bytes are still
+arriving — not whether you can use what already got here.
+
+Measured on a response that streams its body and never closes: the document reads
+`loading` indefinitely, and a button appended to it is still created, still clicked,
+and still fires its handler. The page was completely operable and we threw it away,
+losing the rest of the command with it.
+
+```
+before   if (sameOrigin && landed.ready !== 'loading')
+after    if (sameOrigin && landed.usable)      // body exists and has children
+```
+
+🔵 The opposite case still throws, and has to: when a route returns nothing at all,
+`page.evaluate` never resolves, the 3-second race leaves `landed` null, and there is
+genuinely nothing to carry on with.
+
+### Mutation coverage: 5/7 → **7/7**
+
+Both survivors from 0.8.4 are dead.
+
+**`goto:timeout-recovery`.** Its check asserted `'goto' in done`, which a page that
+never needed recovering also satisfies — the check read as reasonable and proved
+nothing. The branch writes its own sentence (`still loading after 30s`), so that is
+what we assert now.
+
+Getting the fixture right took five attempts, each ruled out by measurement rather
+than by guessing:
+
+```
+hanging image / stylesheet / iframe   DOMContentLoaded fires in 30ms — goto never times out
+a route that returns nothing          evaluate itself blocks — rethrowing is correct
+body streamed, response left open     times out, evaluate works, DOM operable ← this one
+```
+
+**`type:keystroke-delay`.** No assertion on `.value` can see this: set the delay to
+zero and the field still ends up correct. The check watches `keydown` timing instead.
+The threshold is not "greater than zero" — with the delay at 0 the gaps still measure
+around 14ms, because every keystroke is its own CDP round trip. The real 25ms delay
+lands near 30ms, so the line sits at 22ms, between two measured values rather than
+beside a plausible-looking one.
+
+🔵 e2e is now 22 checks, and this time the number means something: every scored
+branch has a check that fails when the branch is disabled.
+
 ## 0.8.4 — 2026-08-31
 
 ### The `text(…)` header now says whether you are seeing all of it
@@ -37,6 +87,9 @@ written for. Turning the recovery off entirely leaves the suite green: both chec
 assert on the outcome (command finished, page usable), and a page that never needed
 recovering gives the same outcome. So "18 → 20 checks" bought two checks and zero
 covered branches. See the 0.8.2 entry, now corrected.
+
+🔵 **Both survivors were killed in 0.9.0**, and chasing the `goto` one turned up a
+real defect in the engine rather than a missing test. See that entry.
 
 ## 0.8.3 — 2026-08-31
 
@@ -141,6 +194,9 @@ reason the checks pass.
 
 🔵 So the honest reading of "18 → 20 checks" is: two more checks, zero more
 branches covered. That is worth writing down more than the number was.
+
+🔵 **Fixed in 0.9.0.** The check now asserts the sentence the branch itself writes,
+and the fixture that finally exercised it took five measured attempts.
 
 ---
 
