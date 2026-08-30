@@ -152,6 +152,43 @@ E=$(act '{"type":{"selector":"input[name=q]","text":"x"},"agent":"'"$AGENT"'"}')
 check "a bad selector names itself"     "$E" "'input[name=q]' in (d.get('error') or '')"
 check "a bad selector says nothing matched" "$E" "'nothing on this page matches' in (d.get('error') or '')"
 
+# --- goto: a page that never finishes loading -------------------------------
+# 🔴 A goto timeout does not mean the page failed. Heavy SPAs keep requests in
+#    flight long past the point where the document is usable, and playwright
+#    rejects on the clock. Rejecting here would throw away the rest of the
+#    command — the click, the type, the read that were meant to follow.
+# 🔵 The fixture is the real shape: the HTML completes, then an image request
+#    hangs forever. `document.readyState` reaches interactive while the network
+#    never goes idle. A page stuck at `loading` is correctly NOT recovered —
+#    that one really is unusable, and the first fixture we tried made that
+#    mistake (it hung a <script>, which blocks parsing).
+PORT_SLOW=7985
+node -e '
+  const http = require("http");
+  http.createServer((req, res) => {
+    if (req.url === "/hang.png") { res.writeHead(200, {"Content-Type": "image/png"}); return; }
+    res.writeHead(200, {"Content-Type": "text/html"});
+    res.end("<!doctype html><html><body><h1>Slow Page</h1>"
+          + "<script>var i=new Image();i.src=\"/hang.png\";</script></body></html>");
+  }).listen(process.env.PORT_SLOW || 7985, "127.0.0.1");
+' PORT_SLOW="$PORT_SLOW" >/dev/null 2>&1 &
+sleep 2
+
+# 🔵 This one takes ~30s — the whole point is that goto hits its timeout.
+R=$(act '{"goto":"http://127.0.0.1:'"$PORT_SLOW"'/","read":true,"agent":"'"$AGENT"'"}')
+check "goto survives a page that never settles" "$R" "any('goto' in s for s in d.get('done',[]))"
+check "and the page is actually usable"         "$R" "d.get('page',{}).get('h1') == 'Slow Page'"
+
+# 🔵 By port, never by name.
+slow_pid=$(ss -ltnp 2>/dev/null | grep ":$PORT_SLOW " | grep -oP 'pid=\K[0-9]+' | head -1)
+[ -n "${slow_pid:-}" ] && kill "$slow_pid" 2>/dev/null
+
+# 🔴 Put the tab back where the later checks expect it. This one bit us: adding the
+#    goto checks left the browser on the slow fixture and three press checks below
+#    went red — not because press broke, but because the field they type into was
+#    no longer on screen. A check that navigates owes the next check a known page.
+act '{"goto":"https://duckduckgo.com","agent":"'"$AGENT"'"}' >/dev/null
+
 # --- press ------------------------------------------------------------------
 R=$(act '{"press":"Escape","agent":"'"$AGENT"'"}')
 check "press reports what it sent"      "$R" "any('Escape' in s for s in d.get('done',[]))"

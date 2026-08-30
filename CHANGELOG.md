@@ -7,6 +7,34 @@ has the detail.
 
 ## Unreleased
 
+### `goto` now has a test for the case it exists to handle
+
+A goto timeout does not mean the page failed — heavy SPAs keep requests in flight
+long past the point where the document is usable, and rejecting there throws away
+the rest of the command. That recovery path had no coverage.
+
+The fixture is the real shape: the HTML completes, then an image request hangs
+forever. `document.readyState` reaches interactive while the network never goes
+idle. **A page stuck at `loading` is correctly *not* recovered** — that one really
+is unusable, and the first fixture we wrote made exactly that mistake (it hung a
+`<script>`, which blocks parsing, so the recovery never fired and we briefly
+suspected the engine instead of the test).
+
+```
+e2e   18 → 20 checks
+```
+
+🔴 **A check that navigates owes the next check a known page.** Adding these left
+the browser on the slow fixture and three `press` checks went red — not because
+`press` broke, but because the field they type into was no longer on screen. The
+goto block now returns the tab before moving on.
+
+🔴 **Not yet re-scored.** `mutate.sh` could not run afterwards: this machine's
+headless Chrome has accumulated enough playwright utility worlds that
+`connectOverCDP` no longer completes, and only a browser restart clears them. The
+two checks above passed when they were written; the mutation score is unverified
+until the next run.
+
 ---
 
 ## 0.8.1 — 2026-08-30
