@@ -5,6 +5,38 @@ has the detail.
 
 ---
 
+## 0.9.10 — 2026-08-31
+
+### A busy machine was being reported as a dead engine
+
+`wb up` said `❌ Engine won't come up` while the engine was running perfectly well.
+`wb status` agreed with it. On a box at load 26, `/health` answered `200` in 11.2
+seconds — and the check gave it 2 seconds, twenty-five times, then concluded it was not
+there.
+
+**Slow is not dead.** A fixed timeout is a guess about how loaded the machine is, and
+that is not something the code can know.
+
+```
+before   ❌ Engine won't come up.  Log: …
+after    ❌ Engine (http://127.0.0.1:7981)
+            no answer within 8s — :7981 is held by pid 1948659 — node engine.js
+            If a process is listed, it is alive but too slow to reply: try WB_HEALTH_TIMEOUT=30
+```
+
+The limit is 8 seconds now and `WB_HEALTH_TIMEOUT` overrides it. More importantly the
+failure says which failure it is: nothing listening, or something listening that cannot
+answer in time. Those want opposite responses — read the log, or wait.
+
+🔵 **Who holds the port**, too. `ss -lptn` leaves the process column empty when the
+socket is not yours to inspect, so "something is on this port" was the whole story;
+finding the pid meant matching an inode from `/proc/net/tcp` against every `/proc/*/fd`
+by hand. `wb` does that itself now.
+
+🔴 Third report today of one shape, and the reporter named it: **the tool knows why it
+failed and does not say.** An empty response called "is the engine up?", a screenshot
+timeout that swallowed the page, and now a slow reply called "not running."
+
 ## 0.9.9 — 2026-08-31
 
 ### One part failing no longer takes the whole reply with it

@@ -5,6 +5,7 @@ A clone that skipped `npm install` used to get `✅ Chrome · ✅ Engine` from
 engine was answering. The commands then ran against a stranger's browser and looked
 like they had worked. Present from 0.1.0 to 0.9.3.
 """
+import os
 import shutil
 import subprocess
 import sys
@@ -97,3 +98,41 @@ def test_a_typo_fails_instead_of_printing_help(tmp_path):
 
     ok = run(d, "help")
     assert ok.returncode == 0, "help should still succeed"
+
+
+def test_slow_is_not_reported_as_dead(tmp_path):
+    """🔴 Reported 2026-08-31 from a machine at load 26: /health answered 200 in 11.2s
+    and `wb up` called it "won't come up". The engine was fine; the box was busy.
+    A fixed 2s limit was deciding a question it could not see.
+    """
+    import subprocess, sys, textwrap, time, socket
+    port = 7996
+    srv = tmp_path / "slow.js"
+    srv.write_text(textwrap.dedent("""
+        const http = require("http");
+        http.createServer((q, r) => setTimeout(() => {
+          r.writeHead(200, {"Content-Type": "application/json"});
+          r.end(JSON.stringify({ok: true, browser: true, build: "t", startedAt: "x"}));
+        }, 4000)).listen(%d, "127.0.0.1");
+    """ % port))
+    proc = subprocess.Popen([shutil.which("node"), str(srv)],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        for _ in range(40):                       # wait for the port, not a fixed sleep
+            with socket.socket() as s:
+                if s.connect_ex(("127.0.0.1", port)) == 0:
+                    break
+            time.sleep(0.25)
+        env = {**os.environ, "WBROWSER_PORT": str(port)}
+        p = subprocess.run([str(ROOT / "wb"), "status"], cwd=ROOT, env=env,
+                           capture_output=True, text=True, timeout=90)
+        assert "✅ Engine" in p.stdout, f"a 4s reply was called dead:\n{p.stdout}"
+
+        # And with the old limit it must still explain itself rather than just failing.
+        p2 = subprocess.run([str(ROOT / "wb"), "status"], cwd=ROOT,
+                            env={**env, "WB_HEALTH_TIMEOUT": "1"},
+                            capture_output=True, text=True, timeout=90)
+        out = p2.stdout + p2.stderr
+        assert "no answer within 1s" in out and "WB_HEALTH_TIMEOUT" in out, out
+    finally:
+        proc.terminate()
