@@ -26,6 +26,13 @@
 //    look like submit/pay/delete are **blocked by default**. If you really need one, the
 //    job file must say "allowIrreversible": true — per job, so it never gets on by accident.
 
+// 🔴 Refuse before doing anything if this checkout was never installed. Neither of
+//    these files needs playwright itself, which is exactly the trap: they ran fine on a
+//    clone with no node_modules and looked healthy. `cron.js list` printed the job list
+//    as though the schedule were live, and `launch.js` reported ALREADY_UP after
+//    attaching to a Chrome that belonged to somebody else. Measured 2026-08-31.
+require('./preflight').requireInstalled();
+
 const fs = require('fs');
 const path = require('path');
 const http = require('http');

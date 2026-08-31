@@ -5,6 +5,28 @@ has the detail.
 
 ---
 
+## 0.9.5 — 2026-08-31
+
+### Two more entry points were running on a clone with nothing installed
+
+0.9.4 guarded `wb`, `engine.js` and `mcp-server.js`. It missed `cron.js` and
+`launch.js`, and it missed them for the reason that makes this class of bug so
+persistent: **neither file imports playwright**, so nothing failed when it loaded.
+
+```
+node cron.js list   → printed the schedule, as though those jobs were live
+node launch.js      → ALREADY_UP, after attaching to somebody else's Chrome
+```
+
+Both were doing what the last release fixed everywhere else: answering as though the
+installation had happened.
+
+🔴 The reason they were missed is that the first fix was a **list** of the places that
+needed guarding. Lists are written from memory, and memory does not include the file
+someone adds next month. There is now a test that walks every `*.js` in the repo and
+fails if a runnable one has no guard — so the next entry point is covered by the test
+rather than by someone remembering.
+
 ## 0.9.4 — 2026-08-31
 
 ### `wb` reported success on a clone that had installed nothing — since 0.1.0

@@ -14,6 +14,13 @@
 //   WBROWSER_PROFILE      profile name (default: Default)
 //   WBROWSER_CDP_PORT     CDP port (default: 9222)
 
+// 🔴 Refuse before doing anything if this checkout was never installed. Neither of
+//    these files needs playwright itself, which is exactly the trap: they ran fine on a
+//    clone with no node_modules and looked healthy. `cron.js list` printed the job list
+//    as though the schedule were live, and `launch.js` reported ALREADY_UP after
+//    attaching to a Chrome that belonged to somebody else. Measured 2026-08-31.
+require('./preflight').requireInstalled();
+
 const { spawn, execFileSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');

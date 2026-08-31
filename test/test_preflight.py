@@ -60,3 +60,22 @@ def test_the_check_lives_in_exactly_one_place(tmp_path):
         ["grep", "-rln", "node_modules/playwright", "wb", "engine.js", "mcp-server.js"],
         cwd=ROOT, capture_output=True, text=True).stdout.split()
     assert hits == [], f"install detection leaked back into {hits}"
+
+
+def test_every_runnable_entry_point_is_guarded():
+    """🔴 Not a list — the list is what failed. `cron.js` and `launch.js` were missed
+    on the first pass because they do not import playwright themselves, so they ran
+    happily on a clone with nothing installed: `cron list` printed the schedule as
+    though it were live, and `launch.js` said ALREADY_UP after attaching to somebody
+    else's Chrome. Anything with a shebang or a main guard has to be covered, and the
+    next file added is covered by this test rather than by someone remembering.
+    """
+    exempt = {"preflight.js"}          # it *is* the check
+    libraries = {"journal.js"}          # required by others, never run directly
+    missing = []
+    for js in sorted(ROOT.glob("*.js")):
+        if js.name in exempt or js.name in libraries:
+            continue
+        if "require('./preflight')" not in js.read_text():
+            missing.append(js.name)
+    assert not missing, f"entry points with no install guard: {missing}"
