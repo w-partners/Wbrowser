@@ -89,6 +89,14 @@ printf '\nchecks\n'
 H=$(curl -s --max-time 5 "http://127.0.0.1:$PORT_ENGINE/health")
 check "health says the browser is attached" "$H" "d['ok'] and d['browser']"
 
+# --- health says which build is answering ------------------------------------
+# 🔴 Reported 2026-08-31: a fix was released and pulled, and it still did not work —
+#    an engine started before the pull was holding the port, so old code answered.
+#    Nothing printed said which build was live, so it took comparing process start
+#    times by hand. "Fixed but not working" should cost one request, not a hunt.
+check "health names the running build" "$H" "d.get('build')"
+check "health says when it started"    "$H" "d.get('startedAt')"
+
 # --- goto + read ------------------------------------------------------------
 R=$(act '{"goto":"https://example.com","read":true,"agent":"'"$AGENT"'"}')
 check "goto example.com lands"          "$R" "d['page']['url'].startswith('https://example.com')"

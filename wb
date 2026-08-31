@@ -171,7 +171,20 @@ case "$cmd" in
     # 🔵 Don't judge with tasklist/netstat — under mirrored WSL all three fail to see
     #    Chrome while CDP responds fine (measured 2026-08-23).
     _cdp_up    && echo "✅ Chrome (CDP $CDP)" || echo "❌ Chrome — ./wb up"
-    _engine_up && echo "✅ Engine ($ENGINE)"  || echo "❌ Engine — ./wb up"
+    # 🔴 Say which build is answering, not just that something is. Reported 2026-08-31:
+    #    a fix was released and pulled, and an engine started before the pull kept the
+    #    port, so old code answered every request. Working that out took comparing
+    #    process start times by hand — this line answers it instead.
+    if _engine_up; then
+      curl -s --max-time 5 "$ENGINE/health" 2>/dev/null | python3 -c "
+import json, sys
+try: d = json.load(sys.stdin)
+except Exception: d = {}
+b, t = d.get('build'), (d.get('startedAt') or '')[:19].replace('T', ' ')
+extra = ('  ' + b if b else '') + ('  up since ' + t + ' UTC' if t else '')
+print('✅ Engine (' + '$ENGINE' + ')' + extra)
+"
+    else echo "❌ Engine — ./wb up"; fi
     # 🔴 Show what the engine says is wrong, not just that something is.
     #    /health returns a hint naming the actual cause; status used to grep for "ok"
     #    and throw the rest away. Measured 2026-08-25: someone read this output dozens

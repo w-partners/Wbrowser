@@ -5,6 +5,30 @@ has the detail.
 
 ---
 
+## 0.9.2 — 2026-08-31
+
+### "Fixed but still broken" is now one question, not a hunt
+
+0.9.1 shipped, someone pulled it, and the bug was still there. The fix was in the
+checkout the whole time — an engine started *before* the pull still held the port, so
+old code answered every request. Working that out took reading process start times
+out of `ss` and `ps` by hand and comparing them to a commit timestamp.
+
+Nothing the tool printed said which build was answering. `wb status` said `✅ Engine`,
+which was true and useless.
+
+```
+✅ Engine (http://127.0.0.1:7981)  0.9.2 (a1b2c3d)  up since 2026-08-31 09:11:04 UTC
+```
+
+`/health` carries `build` and `startedAt` too. If the version does not match what you
+just pulled, or the start time predates it, you are talking to an old process — and
+that now takes one glance instead of two commands and a subtraction.
+
+🔵 The general shape, and worth stating plainly: **a tool that reports "running"
+without saying *what* is running lets a stale process impersonate a fix.** Every check
+we had passed while the wrong code served every request.
+
 ## 0.9.1 — 2026-08-31
 
 ### A key the engine does not know is now a 400, not a shrug

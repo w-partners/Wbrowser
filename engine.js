@@ -545,6 +545,26 @@ const KNOWN_KEYS = new Set([
   'console', 'errors', 'network', 'tab', 'account', 'agent', 'selector',
 ]);
 
+// 🔴 What is actually running here. Reported 2026-08-31: a fix was released, pulled,
+//    and still did not work — an engine started before the pull was holding the port,
+//    so old code answered every request. It took someone comparing process start times
+//    by hand to see it, because nothing the tool printed said which build was live.
+//    `/health` now says. "Fixed but not working" should be one request to answer.
+const STARTED_AT = new Date().toISOString();
+const BUILD = (() => {
+  try {
+    // eslint-disable-next-line global-require
+    const { version } = require('./package.json');
+    let commit = null;
+    try {
+      commit = require('child_process')
+        .execSync('git rev-parse --short HEAD', { cwd: __dirname, stdio: ['ignore', 'pipe', 'ignore'] })
+        .toString().trim();
+    } catch { /* not a git checkout — the version alone still helps */ }
+    return commit ? `${version} (${commit})` : version;
+  } catch { return 'unknown'; }
+})();
+
 async function act(cmd) {
   const unknown = Object.keys(cmd || {}).filter((k) => !KNOWN_KEYS.has(k));
   if (unknown.length) {
@@ -791,6 +811,7 @@ const server = http.createServer(async (req, res) => {
         const v = ctx.pages();
         return res.end(JSON.stringify({
           ok: true, browser: true, cdp: CDP, openTabs: v.length,
+          build: BUILD, startedAt: STARTED_AT,
         }, null, 2));
       } catch (e) {
         // 🔴 Do not always say "the browser is not running". When Chrome is answering
@@ -804,6 +825,7 @@ const server = http.createServer(async (req, res) => {
           ok: true,               // the engine is alive
           browser: false,         // we could not attach
           cdp: CDP,
+          build: BUILD, startedAt: STARTED_AT,
           hint: stale
             ? 'Do not retry — close Chrome fully and run "wb up". Chrome answers but '
               + 'cannot be attached to, and each further attempt makes it worse.'
