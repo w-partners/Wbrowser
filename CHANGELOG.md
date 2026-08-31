@@ -5,6 +5,34 @@ has the detail.
 
 ---
 
+## 0.9.3 — 2026-08-31
+
+### The version field now has a test that it reports the *running* code
+
+0.9.2 added `build` so a stale process could not pass for a fresh one. Nothing
+guaranteed it stayed that way. Read the version file on each request instead of once
+at startup and the field starts lying at exactly the moment it exists to prevent a
+lie — an old process picks up the new number the second someone edits the file.
+
+The check edits `package.json` underneath a live engine and asserts the answer does
+not move.
+
+🔵 Writing it turned up something we did not know about our own code. The obvious
+mutation — `require('./package.json').version` at call time — **does not break it**,
+because Node caches `require` and hands back the copy read at startup. The field was
+protected by a language detail nobody had chosen. Only bypassing the cache
+(`readFileSync` on every call) breaks it, and that is what the check now proves it
+catches.
+
+🔴 So a check written against the plausible mutation would have passed on both the
+good and the bad build. **The mutation has to be the one that actually breaks the
+property, not the one that looks like it should.**
+
+🔵 Found because a neighbouring project hit this for real: their version was read per
+call, and editing the file made a process started hours earlier report the new
+number. They asked, we tested ours, and ours held — but only by accident, and with
+nothing keeping it that way.
+
 ## 0.9.2 — 2026-08-31
 
 ### "Fixed but still broken" is now one question, not a hunt

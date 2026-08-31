@@ -97,6 +97,22 @@ check "health says the browser is attached" "$H" "d['ok'] and d['browser']"
 check "health names the running build" "$H" "d.get('build')"
 check "health says when it started"    "$H" "d.get('startedAt')"
 
+# 🔴 And that `build` is what is *running*, not what is on disk. Read the file on
+#    every request and an old process picks up a new version number — which is a lie
+#    told at exactly the moment this field exists to prevent one. Measured on the
+#    neighbouring project the same day: editing the version file made a process
+#    started hours earlier report the new version.
+#    So: change the file underneath a live engine and the answer must not move.
+cp package.json /tmp/wb-e2e-pkg.bak
+python3 - <<'PY'
+import json, pathlib
+p = pathlib.Path("package.json"); d = json.loads(p.read_text())
+d["version"] = "9.9.9"; p.write_text(json.dumps(d, indent=2, ensure_ascii=False) + "\n")
+PY
+H2=$(curl -s --max-time 5 "http://127.0.0.1:$PORT_ENGINE/health")
+cp /tmp/wb-e2e-pkg.bak package.json && rm -f /tmp/wb-e2e-pkg.bak
+check "build reports the running code, not the file" "$H2" "'9.9.9' not in (d.get('build') or '')"
+
 # --- goto + read ------------------------------------------------------------
 R=$(act '{"goto":"https://example.com","read":true,"agent":"'"$AGENT"'"}')
 check "goto example.com lands"          "$R" "d['page']['url'].startswith('https://example.com')"
