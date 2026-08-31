@@ -5,6 +5,38 @@ has the detail.
 
 ---
 
+## 0.9.9 — 2026-08-31
+
+### One part failing no longer takes the whole reply with it
+
+Two reports from real use, both the same shape.
+
+**A screenshot timeout deleted the page summary.** On a heavy feed,
+`{read:true, shot:true}` came back as `{"error":"page.screenshot: Timeout"}` and
+nothing else. The summary had already been gathered — it was thrown away with the
+exception. Someone collecting from three sites got zero characters from all three, and
+the reply blamed the screenshot, which was not what they had asked for.
+
+**`read` on an endless feed never returned.** `x.com/home` did not answer at 45s, or at
+180s. `goto` has a 30-second guard; the summary that runs after it had none, so a page
+whose DOM keeps growing while you walk it could be walked forever. The guard on one
+step was undone by the next.
+
+```
+before   {read, shot} on a heavy page → {"error": "page.screenshot: Timeout"}
+after    → page: {...}
+           🔴 screenshot: timed out after 20s (the rest of the command still ran)
+```
+
+Both now have their own limit, and both report what failed while keeping what worked.
+`read` says so plainly when it gives up: *the page kept changing while it was being
+read (an endless feed does this)*.
+
+🔵 This partly contradicts the rule added in 0.9.1 — *take `read` and `shot` together
+before anything irreversible*. Following it on a heavy feed was losing the evidence it
+was meant to preserve. The rule stands; it works now because a failed screenshot no
+longer costs you the page.
+
 ## 0.9.8 — 2026-08-31
 
 ### A mistyped command printed the help and exited 0

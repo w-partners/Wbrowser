@@ -132,6 +132,17 @@ check "the reply names the agent whose tab it read" "$R" "d.get('agent') == '$AG
 U=$(act '{"read":true}')
 check "and says so when no agent was given"         "$U" "d.get('agent') is None"
 
+# 🔴 One part failing must not take the others down. Reported 2026-08-31: on a heavy
+#    feed `{read:true,shot:true}` came back as {"error":"page.screenshot: Timeout"} and
+#    nothing else — the page summary had already been gathered and was thrown away with
+#    the exception. A collector reading three sites got zero characters from all three,
+#    and the reply blamed the screenshot, which was not what the caller had asked for.
+R2=$(act '{"goto":"https://example.com","read":true,"shot":true,"agent":"'"$AGENT"'"}')
+check "read and shot in one call both arrive" "$R2" \
+  "d.get('page') and d.get('screenshot_b64')"
+check "and neither reports a failure"         "$R2" \
+  "not d.get('readError') and not d.get('shotError')"
+
 # --- read finds a real form -------------------------------------------------
 R=$(act '{"goto":"https://duckduckgo.com","read":true,"agent":"'"$AGENT"'"}')
 check "read lists the search field"     "$R" "any(i.get('name')=='q' for i in d['page']['inputs'])"

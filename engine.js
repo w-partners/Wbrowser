@@ -774,12 +774,36 @@ async function act(cmd) {
     if (cmd.errors) result.errors = take(L.errors, cmd.limit);
     if (cmd.network) result.network = take(L.requests, cmd.limit);
   }
-  if (cmd.shot) {
-    const buf = await page.screenshot({ fullPage: !!cmd.fullPage });
-    result.screenshot_b64 = buf.toString('base64');
-  }
+  // 🔴 Read first, and never let one part take the others down with it. Reported
+  //    2026-08-31: `{read:true, shot:true}` on a heavy feed returned
+  //    `{"error":"page.screenshot: Timeout"}` and nothing else — the page summary was
+  //    already gathered and got thrown away with the exception. A collector reading
+  //    three platforms got zero characters from all of them, and the reply blamed the
+  //    screenshot, which is not what the caller wanted.
+  //    Partial results beat none: say what failed, keep what worked.
   if (cmd.read || cmd.goto || cmd.click || cmd.press || cmd.newtab) {
-    result.page = await summarize(page);
+    // 🔴 Cap it. `summarize` walks the DOM, and on an infinite-scroll feed the DOM
+    //    keeps growing while it walks — x.com/home never returned, not even at 180s.
+    //    goto has a 30s guard; this had none, so the guard on one step was undone by
+    //    the next.
+    const summary = await Promise.race([
+      summarize(page).catch((e) => ({ _failed: e.message.split('\n')[0] })),
+      new Promise((res) => { setTimeout(() => res({ _failed: 'read: timed out after 30s — the page kept changing while it was being read (an endless feed does this)' }), 30000); }),
+    ]);
+    if (summary && summary._failed) result.readError = summary._failed;
+    else result.page = summary;
+  }
+  if (cmd.shot) {
+    try {
+      const buf = await Promise.race([
+        page.screenshot({ fullPage: !!cmd.fullPage, timeout: 20000 }),
+        new Promise((_, rej) => { setTimeout(() => rej(new Error('screenshot: timed out after 20s')), 21000); }),
+      ]);
+      result.screenshot_b64 = buf.toString('base64');
+    } catch (e) {
+      // The screenshot is evidence, not the answer. Losing it must not lose the rest.
+      result.shotError = e.message.split('\n')[0];
+    }
   }
 
   // Work journal (optional). Only recorded when WBROWSER_NOTES is set.

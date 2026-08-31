@@ -53,6 +53,13 @@ def main():
     if "result" in d:
         v = d["result"]
         print("  result:", v if isinstance(v, str) else json.dumps(v, ensure_ascii=False))
+    # 🔴 A part that failed has to say so. These are set when read or shot timed out
+    #    but the rest of the command worked — silence here would mean the caller sees
+    #    a reply with no page in it and no reason given.
+    if d.get("readError"):
+        print("  🔴 read:", d["readError"])
+    if d.get("shotError"):
+        print("  🔴 screenshot:", d["shotError"], "(the rest of the command still ran)")
     if d.get("evalError"):
         print("  ❌ execution error:", d["evalError"])
 
