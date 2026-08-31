@@ -15,6 +15,13 @@ These are not style preferences — each one came from a bug we actually hit:
 - **Never fail silently.** If something didn't happen, say so and say why.
   We once had `stdio: 'ignore'` swallow Chrome's "Missing X server" and report only
   "CDP not responding" — the symptom, with the cause deleted.
+- **Say what answered, not just that something did.** This one is not covered by the
+  rule above, because nothing fails: a fix shipped, was pulled, and still did not
+  work, because an engine started before the pull held the port and old code served
+  every request. Health checks passed. Responses were well-formed. Only the values
+  were stale. `wb status` said `✅ Engine`, which was true and useless — it now prints
+  the version, the commit and the start time. **A component that reports "running"
+  without saying *what* is running lets an old one impersonate the new one.**
 - **Don't guess when you can measure.** If the code can't determine something
   (which profile, which Chrome, which user), stop and say so. Do not pick a
   plausible default. A wrong guess writes files to a stranger's folder.
