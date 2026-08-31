@@ -5,6 +5,28 @@ has the detail.
 
 ---
 
+## 0.9.6 — 2026-08-31
+
+### The reply now says *whose* tab it read
+
+Tabs are keyed by `(agent, tab)`, so two callers both using the default `main` are on
+two different pages. The reply said `tab: "main"` to both of them.
+
+Someone compared a bare `curl {"read":true}` against `./wb read`, got two different
+pages back, and spent an afternoon looking for a bug in the client parser. There was
+no bug: `wb` attaches an agent name and a hand-written curl does not, so the two calls
+were reading different tabs — and neither answer said so.
+
+```
+before   {"tab":"main", "account":"Default", …}      ← both callers, different pages
+after    {"tab":"main", "agent":"e2e", …}
+         · [Default · agent e2e] goto https://example.com
+```
+
+🔵 Same shape as the version field in 0.9.2: the tool reported *that* it did something
+without reporting *what it did it to*. Two answers that cannot be told apart are worse
+than one that is missing, because you compare them.
+
 ## 0.9.5 — 2026-08-31
 
 ### Two more entry points were running on a clone with nothing installed

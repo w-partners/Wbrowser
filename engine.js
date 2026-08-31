@@ -753,7 +753,14 @@ async function act(cmd) {
     usedProfile = p ? (p.split('\\').pop() || p) : null;
   } catch { /* keep going even if it cannot be read */ }
 
-  const result = { tab, account: usedProfile, done };
+  // 🔴 Say whose tab this was, not just which name it had. Tabs are keyed by
+  //    (agent, tab), so two callers using the default `main` are on two different
+  //    pages — and the reply said `tab: "main"` to both. Reported 2026-08-31: someone
+  //    compared `curl {"read":true}` against `wb read`, got different pages, and spent
+  //    the afternoon hunting a client-side parser bug. There was no bug. `wb` attaches
+  //    an agent name and the bare curl does not, so they were reading different tabs
+  //    and nothing in either answer said so.
+  const result = { tab, agent: cmd.agent || null, account: usedProfile, done };
   if (evalResult !== undefined) result.result = evalResult;
   if (evalError) result.evalError = evalError;
 

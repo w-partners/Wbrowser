@@ -122,6 +122,16 @@ check "read returns links"              "$R" "len(d['page']['links']) > 0"
 #    agent's tab from their own in the tab bar, which is the one safety feature here.
 check "the tab is labelled with the agent" "$R" "d['page']['title'].startswith('[$AGENT]')"
 
+# 🔴 The reply has to say WHOSE tab it read. Tabs are keyed by (agent, tab), so two
+#    callers on the default `main` are on different pages — and the answer used to say
+#    `tab: "main"` to both. Reported 2026-08-31: someone compared a bare curl against
+#    `wb read`, got different pages, and went looking for a client-side parser bug.
+#    There was none. `wb` sends an agent name, the bare curl does not, and nothing in
+#    either reply said they were different tabs.
+check "the reply names the agent whose tab it read" "$R" "d.get('agent') == '$AGENT'"
+U=$(act '{"read":true}')
+check "and says so when no agent was given"         "$U" "d.get('agent') is None"
+
 # --- read finds a real form -------------------------------------------------
 R=$(act '{"goto":"https://duckduckgo.com","read":true,"agent":"'"$AGENT"'"}')
 check "read lists the search field"     "$R" "any(i.get('name')=='q' for i in d['page']['inputs'])"

@@ -31,9 +31,16 @@ def main():
         return 1
 
     if d.get("done"):
-        # Also print which account's window it happened in — essential when there are several accounts.
+        # Which account's window, and whose tab. Both are needed to know what you were
+        # looking at: tabs are keyed by (agent, tab), so two callers on the default
+        # `main` are on different pages. Without the agent, two answers that read
+        # different tabs are indistinguishable — reported 2026-08-31 by someone who
+        # compared `curl` against `wb`, saw different pages, and went looking for a
+        # parser bug that did not exist.
         acct = d.get("account")
-        prefix = "[%s] " % acct if acct else ""
+        who = d.get("agent")
+        bits = [b for b in (acct, who and "agent %s" % who) if b]
+        prefix = "[%s] " % " · ".join(bits) if bits else ""
         print("· " + prefix + ", ".join(d["done"]))
 
     # eval result
