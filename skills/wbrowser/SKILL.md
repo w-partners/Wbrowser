@@ -193,3 +193,25 @@ silent failures through: text truncated to 55 of 92 characters and reported as
 success, rows two through ten of a form left empty. A selector failure looks the
 same in the DOM whether it was a login wall, a modal, or a bot check; the pixels
 tell you which. One call, because two round trips can straddle a change.
+
+## Several browsers at once
+
+A second Chrome — its own window, profile and logins, fully separate from the one you
+are signed into. Register it once (it gets a permanent number), start it, sign in by
+hand the first time.
+
+```bash
+wb new work          # register 'work' — gets a number, e.g. 2, and keeps it
+wb -b work up        # start it; a window opens, sign into it once
+wb -b work go https://mail.google.com
+wb -b 2 read         # name or number, either works
+wb browsers          # list them
+```
+
+Tab titles read `[browser-tab]`: `[1-2]` is the second tab of browser 1, `[2-1]` the
+first tab of browser 2. That is how you point at one tab among several browsers.
+
+🔵 No `-b` means browser 1 — the Chrome you were already logged into, unchanged. The
+number is fixed once assigned, so `[2-1]` today is `[2-1]` tomorrow.
+🔴 Each named browser starts empty. A person signs into it; agents never handle
+passwords.

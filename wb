@@ -3,6 +3,14 @@
 #
 #   ./wb up              start Chrome + engine (leaves them alone if already up)
 #   ./wb status          are they alive (the judge is CDP/engine responses, not the process list)
+#
+#   Several browsers at once — a second Chrome, its own window, profile and logins:
+#     ./wb new work        register a browser named 'work' (it gets a fixed number, e.g. 2)
+#     ./wb -b work up      start it — then sign into it once, by hand
+#     ./wb -b work go URL  drive it (or -b 2; name and number both work)
+#     ./wb browsers        list them
+#   Tab titles read [browser-tab]: [1-2] is the second tab of browser 1. No -b = browser 1,
+#   the Chrome you were already logged into.
 #   ./wb go <url>        open a page
 #   ./wb read            summarize the current screen (title, links, buttons, inputs)
 #   ./wb click <selector>
@@ -30,8 +38,45 @@ while [ -L "$_SELF" ]; do
   esac
 done
 DIR="$(cd "$(dirname "$_SELF")" && pwd)"
-ENGINE="http://127.0.0.1:${WBROWSER_PORT:-7981}"
-CDP="http://127.0.0.1:${WBROWSER_CDP_PORT:-9222}"
+# 🔵 A named browser is a second (or third) Chrome, fully separate from the one you
+#    are logged into — its own window, profile and logins. You should never have to
+#    know a port number: the name decides both ports, the same way every time, so
+#    `wb -b work status` and `wb -b work go …` always reach the same browser.
+#    -b/--browser picks it; WBROWSER_BROWSER is the same thing as an env var.
+#    Without a name you get the default browser on the standard ports, unchanged.
+# The browser can be named with -b/--browser, or WBROWSER_BROWSER. It is a name
+# (`work`) or a number (`1`, `2`) — browsers.py maps either to a fixed number and the
+# ports that go with it, so a person never types a port. No -b means browser 1, the
+# Chrome you were already logged into, on the unchanged default ports.
+BROWSER="${WBROWSER_BROWSER:-}"
+_prev=""
+for _a in "$@"; do
+  case "$_prev" in -b|--browser) BROWSER="$_a" ;; esac
+  case "$_a" in --browser=*) BROWSER="${_a#--browser=}" ;; esac
+  _prev="$_a"
+done
+# Ask the registry — the single source of number<->name<->port. The shell never
+# computes a port itself; that is how two callers end up on different numbers for one
+# name. An unknown name is not fatal here, because `wb new` has to reach this line.
+if [ -n "$BROWSER" ]; then
+  _RESOLVED=$(python3 "$DIR/browsers.py" resolve "$BROWSER" 2>/dev/null)
+else
+  _RESOLVED=""
+fi
+if [ -n "$_RESOLVED" ]; then
+  BROWSER_NUM=$(printf '%s' "$_RESOLVED" | cut -f1)
+  BROWSER_NAME=$(printf '%s' "$_RESOLVED" | cut -f2)
+  CDP_PORT=$(printf '%s' "$_RESOLVED" | cut -f3)
+  ENGINE_PORT=$(printf '%s' "$_RESOLVED" | cut -f4)
+else
+  # No -b: the default browser. 🔵 A raw WBROWSER_PORT/WBROWSER_CDP_PORT still wins here,
+  #    which is how the tests and existing setups pin a port. -b and an explicit port
+  #    are not meant to be combined.
+  BROWSER_NUM=1; BROWSER_NAME=default
+  CDP_PORT="${WBROWSER_CDP_PORT:-9222}"; ENGINE_PORT="${WBROWSER_PORT:-7981}"
+fi
+ENGINE="http://127.0.0.1:${ENGINE_PORT}"
+CDP="http://127.0.0.1:${CDP_PORT}"
 # 🔴 Logs record visited URLs — keep them out of the repo folder so zipping or
 #    sharing the directory can't leak them. (.gitignore only guards git.)
 _state_dir() {
@@ -151,6 +196,8 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --account|-a) ACCOUNT="${2:-}"; shift 2 || shift ;;
     --account=*)  ACCOUNT="${1#--account=}"; shift ;;
+    --browser|-b) shift 2 || shift ;;   # already read in the pre-scan above
+    --browser=*)  shift ;;
     *) ARGS+=("$1"); shift ;;
   esac
 done
@@ -163,12 +210,36 @@ cmd="${1:-status}"; shift || true
 #    reached a stranger's engine and captured their screen. Only `up` and `version` run
 #    without dependencies: one installs nothing but explains, the other just reads a file.
 case "$cmd" in
-  up|version|--version|-v|help|--help|-h) ;;
+  up|new|browsers|version|--version|-v|help|--help|-h) ;;
   *) _needs_install && exit 1 ;;
 esac
 
 case "$cmd" in
+  new)
+    # Register a browser and give it its permanent number. Does not launch it —
+    # `wb -b <name> up` does that. Idempotent: `wb new work` twice is fine.
+    NAME="${1:-}"
+    [ -n "$NAME" ] || { echo "Usage: wb new <name>    e.g. wb new work" >&2; exit 1; }
+    LINE=$(python3 "$DIR/browsers.py" add "$NAME") || exit 1
+    N=$(printf '%s' "$LINE" | cut -f1)
+    echo "✅ Browser $N is '$NAME'.  Start it with:  wb -b $NAME up   (then sign in once)"
+    exit 0 ;;
+  browsers)
+    # The list, so a person can see which number is which.
+    echo "  #  name"
+    python3 "$DIR/browsers.py" list | while IFS=$'\t' read -r n nm; do
+      printf '  %-2s %s\n' "$n" "$nm"
+    done
+    exit 0 ;;
   up)
+    # 🔵 Browser 2+ is a second Chrome — its own window, profile and logins, on ports
+    #    that come from its number. It starts empty, so the person signs into it once
+    #    (agents never handle passwords). Browser 1 is the Chrome you were already in.
+    if [ "$BROWSER_NUM" != 1 ]; then
+      export WBROWSER_CDP_PORT="$CDP_PORT"
+      export WBROWSER_PROFILE_DIR="${WBROWSER_PROFILE_ROOT:-$HOME/.wbrowser}/$BROWSER_NAME"
+      echo "· Browser $BROWSER_NUM '$BROWSER_NAME'  (CDP $CDP_PORT, engine $ENGINE_PORT)"
+    fi
     if _cdp_up; then echo "· Chrome already up"; else
       # 🔴 The default is "attach to the Chrome the user is logged into", not launching a new one.
       #    Chrome locks the default profile so we can't launch it, and if we do launch one
@@ -192,7 +263,9 @@ case "$cmd" in
       fi
     fi
     if _engine_up; then echo "· Engine already up"; else
-      nohup node "$DIR/engine.js" > "$LOG" 2>&1 &
+      WBROWSER_PORT="$ENGINE_PORT" WBROWSER_CDP_PORT="$CDP_PORT" \
+        WBROWSER_BROWSER_NUM="$BROWSER_NUM" \
+        nohup node "$DIR/engine.js" > "$LOG" 2>&1 &
       for _ in $(seq 1 25); do _engine_up && break; sleep 0.4; done
       if _engine_up; then echo "· Engine started $ENGINE"
       else

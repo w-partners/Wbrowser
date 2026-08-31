@@ -24,6 +24,10 @@ const { chromium } = require('playwright');
 const { appendJournal } = require('./journal');
 
 const PORT = process.env.WBROWSER_PORT || 7981;
+// 🔵 Which browser this engine drives, for the tab label. 1 is the Chrome you were
+//    already in; 2, 3… are the named ones. A tab then reads `[1-2]` — browser 1,
+//    tab 2 — which is how a person refers to it out loud.
+const BROWSER_NUM = process.env.WBROWSER_BROWSER_NUM || '1';
 // 🔵 CDP address. Accepts both WBROWSER_CDP (full URL) and WBROWSER_CDP_PORT (port only).
 //    launch.js uses _PORT, and if the engine ignores it then whenever the user changes
 //    the port the engine silently attaches to the default 9222 (= someone else's
@@ -409,21 +413,40 @@ const titleScripted = new WeakSet();
 //    · Registering via addInitScript applies it automatically to **every subsequent
 //      navigation** as well.
 //    · Re-entrancy guard: the observer fires even while we are writing, so a flag blocks it.
-async function stampTitle(page, agent, tabName) {
-  const install = ({ tag, tab }) => {
+// 🔵 The coordinate for a tab: "<browser>-<tab>", e.g. "1-2". The tab number is the
+//    page's position in its context's list — the same numbering `wb tabs` prints, so
+//    what you see there and what the title says agree. Best-effort: if the page is not
+//    found (mid-close), fall back to the browser number alone.
+function coordOf(page) {
+  try {
+    const pages = page.context().pages();
+    const i = pages.indexOf(page);
+    return `${BROWSER_NUM}-${i >= 0 ? i + 1 : '?'}`;
+  } catch {
+    return `${BROWSER_NUM}-?`;
+  }
+}
+
+async function stampTitle(page, agent, tabName, coord) {
+  const install = ({ tag, tab, mark }) => {
     const KEY = '__wbrowserTitleGuard';
     window.__wbrowserAgent = tag;
     // 🔵 The tab key lives in the page, not only in the engine's memory. The engine's map
     //    is lost when it restarts; this is not, so the tab can be adopted back afterwards.
     window.__wbrowserTab = tab;
+    window.__wbrowserMark = mark;              // e.g. "1-2": browser 1, tab 2
     const apply = () => {
       if (window[KEY]) return;                 // we are writing right now — prevent recursion
-      const want = `[${window.__wbrowserAgent}] `;
+      // 🔵 `[1-2] agent` — browser number, tab number, then who is driving. The
+      //    coordinate is how a person points at one tab among several browsers; the
+      //    agent name is who to blame if it moves. Both, because they answer different
+      //    questions.
+      const want = `[${window.__wbrowserMark}] ${window.__wbrowserAgent} `;
       const cur = document.title || '';
       if (cur.startsWith(want)) return;
       window[KEY] = true;
       try {
-        document.title = want + cur.replace(/^\[[^\]]*\]\s*/, '');
+        document.title = want + cur.replace(/^\[[^\]]*\]\s*\S*\s*/, '').replace(/^\[[^\]]*\]\s*/, '');
       } finally {
         window[KEY] = false;
       }
@@ -438,7 +461,7 @@ async function stampTitle(page, agent, tabName) {
     });
   };
 
-  const arg = { tag: agent, tab: tabName };
+  const arg = { tag: agent, tab: tabName, mark: coord || `${BROWSER_NUM}-?` };
   try {
     // Apply immediately to the current page
     await page.evaluate(install, arg);
@@ -717,7 +740,7 @@ async function act(cmd) {
     //    text/plain file used to swallow every command that followed it.
     //    Losing the label on a dying tab is fine. Losing the command is not.
     await Promise.race([
-      (async () => { await stampTitle(page, cmd.agent, tab); await showBanner(page, cmd.agent); })(),
+      (async () => { await stampTitle(page, cmd.agent, tab, coordOf(page)); await showBanner(page, cmd.agent); })(),
       new Promise((res) => { setTimeout(res, 5000); }),
     ]).catch(() => {});
   }
@@ -970,7 +993,7 @@ const server = http.createServer(async (req, res) => {
       const tabName = body.tab || 'main';
       tabs.set(`${agent}::${tabName}`, page);
       wireLogging(page);
-      await stampTitle(page, agent, tabName);
+      await stampTitle(page, agent, tabName, coordOf(page));
       return res.end(JSON.stringify({
         taken: { n: idx, url: page.url(), title: await titleOf(page) },
         as: { agent, tab: tabName },

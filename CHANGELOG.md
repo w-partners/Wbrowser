@@ -5,6 +5,37 @@ has the detail.
 
 ---
 
+## 0.10.0 — 2026-09-01
+
+### Several logged-in browsers at once, referred to by number
+
+You can run more than one Chrome — a second, third, each with its own window, profile
+and logins, fully separate from the one you started with. Register a browser by name
+and it gets a permanent number; drive it by either.
+
+```
+wb new work          # 'work' is now browser 2, and stays browser 2
+wb -b work up        # its window opens — you sign into it once, by hand
+wb -b work go https://mail.google.com
+wb -b 2 read         # name or number
+wb browsers          # the list
+```
+
+Tab titles read `[browser-tab]`: **`[1-2]` is the second tab of browser 1**, `[2-1]`
+the first tab of browser 2. That is the whole point — a coordinate you can say out loud
+to pick one tab among several browsers.
+
+🔵 No `-b` is browser 1, the Chrome you were already logged into, on the unchanged
+ports. Nothing about the single-browser workflow moves.
+
+🔴 The number is assigned once and never reused, because a coordinate is only useful if
+it holds still — `browsers.py` is the single registry, so `work` is 2 from every caller
+and every session. Ports come from the number, so **nobody types a port**: `wb -b work`
+and `wb -b 2` resolve to the same place the same way every time.
+
+🔴 Each named browser starts empty. The person signs in; agents never touch passwords —
+the same rule as everywhere else in this tool.
+
 ## 0.9.10 — 2026-08-31
 
 ### A busy machine was being reported as a dead engine
