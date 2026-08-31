@@ -5,6 +5,33 @@ has the detail.
 
 ---
 
+## 0.9.7 — 2026-08-31
+
+### A missing argument answered with a Python traceback
+
+Type a command bare to see what it wants — the most ordinary thing a new user does —
+and four of them replied with a stack trace:
+
+```
+$ wb go
+Traceback (most recent call last):
+  ...
+IndexError: list index out of range
+```
+
+`go`, `click`, `type` and `press`. They now say what they need:
+
+```
+Usage: wb go <url>
+Usage: wb click <selector>
+Usage: wb type <selector> [text]   [--fast]   (no text clears the field)
+Usage: wb press <key>              e.g. Enter, Tab, Control+A
+```
+
+🔵 The first version of this fix required two arguments for `type` and broke clearing a
+field, which `wb type <selector>` with no text has always done. The existing test
+caught it. That is what those tests are for, and it is why the fix is one argument.
+
 ## 0.9.6 — 2026-08-31
 
 ### The reply now says *whose* tab it read

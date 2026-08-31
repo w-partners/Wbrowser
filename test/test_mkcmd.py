@@ -98,3 +98,19 @@ class TestRejections(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# 🔴 Typing a command bare to see what it wants is the most ordinary thing a new user
+#    does. Until 0.9.7 it was answered with `IndexError: list index out of range` and a
+#    Python traceback — measured on go, click, type and press.
+def test_missing_arguments_print_usage_not_a_traceback():
+    import subprocess, sys
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent
+    for op in ("go", "click", "type", "press", "eval"):
+        p = subprocess.run([sys.executable, str(root / "mkcmd.py"), op],
+                           capture_output=True, text=True, timeout=30)
+        out = p.stdout + p.stderr
+        assert p.returncode != 0, f"{op} with no argument was accepted"
+        assert "Usage:" in out, f"{op} did not say what it needs: {out[:120]}"
+        assert "Traceback" not in out, f"{op} still shows a traceback"

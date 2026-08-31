@@ -12,16 +12,29 @@ import os
 import sys
 
 
+# 🔴 Say what the command needs, in one line the person can act on. Without this a
+#    missing argument came out as `IndexError: list index out of range` and a Python
+#    traceback — measured 2026-08-31 on `wb go`, `wb click`, `wb type` and `wb press`.
+#    Typing a command bare to see what it wants is the most ordinary thing a new user
+#    does, and it was answered with a stack trace.
+def need(rest, n, usage):
+    if len(rest) < n:
+        raise SystemExit("Usage: wb %s\n       (run `wb read` first — it lists the "
+                         "selectors actually on the page)" % usage)
+
+
 def build(argv):
     if not argv:
         raise SystemExit("mkcmd: no op given")
     op, rest = argv[0], argv[1:]
 
     if op == "go":
+        need(rest, 1, "go <url>")
         return {"goto": rest[0], "read": True}
     if op == "read":
         return {"read": True}
     if op == "click":
+        need(rest, 1, "click <selector>")
         return {"click": rest[0], "wait": 1200, "read": True}
     if op == "type":
         # Preserve spaces in the text as-is — join all the remaining arguments.
@@ -33,11 +46,15 @@ def build(argv):
         if "--fast" in args:
             args.remove("--fast")
             fast = True
+        # 🔵 Only the selector is required — `wb type <selector>` with no text clears
+        #    the field, which is a real thing people do. Do not "fix" this into two.
+        need(args, 1, "type <selector> [text]   [--fast]   (no text clears the field)")
         cmd = {"type": {"selector": args[0], "text": " ".join(args[1:])}}
         if fast:
             cmd["type"]["fast"] = True
         return cmd
     if op == "press":
+        need(rest, 1, "press <key>            e.g. Enter, Tab, Control+A")
         return {"press": rest[0], "wait": 1800, "read": True}
     if op == "shot":
         return {"shot": True}
@@ -55,6 +72,7 @@ def build(argv):
             c["filter"] = " ".join(rest)
         return c
     if op == "eval":
+        need(rest, 1, "eval <javascript>")
         return {"eval": " ".join(rest)}
     raise SystemExit("mkcmd: unknown op %r" % op)
 
