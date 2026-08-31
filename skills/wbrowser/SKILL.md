@@ -158,3 +158,38 @@ binds to `127.0.0.1`). Install there and have that user sign in:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/w-partners/Wbrowser/main/setup.sh | bash
 ```
+
+## Driving it over HTTP
+
+`wb` is a wrapper. If you are calling the engine yourself, there is one endpoint —
+`POST /act` on `127.0.0.1:7979` — and **the verb is a key, not a value**:
+
+```bash
+curl -s -X POST http://127.0.0.1:7979/act -H 'Content-Type: application/json' \
+  -d '{"read":true}'
+```
+
+| what | payload |
+|---|---|
+| read the page | `{"read":true}` |
+| screenshot | `{"shot":true}` |
+| both at once | `{"read":true,"shot":true}` |
+| navigate | `{"goto":"<url>","read":true}` |
+| click | `{"click":"<selector>","wait":1200,"read":true}` |
+| type | `{"type":{"selector":"<sel>","text":"..."}}` |
+| keys | `{"press":"Control+A"}` |
+| run JS | `{"eval":"document.title"}` |
+| console / errors / network | `{"console":true}` `{"errors":true}` `{"network":true}` |
+
+Add `"agent":"<your name>"` so the tab is labelled, and `"tab":"<name>"` to keep
+separate tabs.
+
+🔵 `{"action":"read"}` is not a thing. Anything the engine does not recognise comes
+back as **400** naming the key — it will not accept a command it cannot carry out.
+
+🔴 **Before anything you cannot undo** — submitting, paying, sending, deleting —
+take `{"read":true,"shot":true}` in one call and keep both. The DOM alone has let
+silent failures through: text truncated to 55 of 92 characters and reported as
+success, rows two through ten of a form left empty. A selector failure looks the
+same in the DOM whether it was a login wall, a modal, or a bot check; the pixels
+tell you which. One call, because two round trips can straddle a change.

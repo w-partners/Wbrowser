@@ -142,6 +142,20 @@ V=$(act '{"eval":"JSON.stringify(window.__wbGaps)","agent":"'"$AGENT"'"}')
 check "type spaces its keystrokes apart" "$V" \
   "(lambda g: len(g) >= 5 and sorted(g)[len(g)//2] >= 22)(__import__('json').loads(d.get('result') or '[]'))"
 
+# --- a mistyped key is refused, not silently ignored -------------------------
+# 🔴 Reported 2026-08-31: someone read the docs, sent {"action":"read"}, and got 200
+#    with `done: []`. Nothing ran and nothing complained, so they tried three more
+#    times before working out the schema. A typo that returns success is worse than
+#    one that returns an error — it sends you looking at the wrong thing.
+U=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 -X POST "http://127.0.0.1:$PORT_ENGINE/act" \
+  -H 'Content-Type: application/json' -d '{"action":"read","agent":"'"$AGENT"'"}')
+if [ "$U" = "400" ]; then ok "an unknown key is refused with 400"; else bad "an unknown key is refused with 400" "got $U"; fi
+
+U=$(curl -s --max-time 20 -X POST "http://127.0.0.1:$PORT_ENGINE/act" \
+  -H 'Content-Type: application/json' -d '{"action":"read","agent":"'"$AGENT"'"}')
+check "and the refusal names the key and the fix" "$U" \
+  "'\"action\"' in d.get('error','') and 'read' in d.get('error','')"
+
 # --- click, including a target below the fold -------------------------------
 # 🔴 `click` had no check at all until 0.8.1 — one of eleven command branches,
 #    entirely uncovered, while the suite reported 15 green. Removing the

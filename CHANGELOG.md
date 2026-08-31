@@ -5,6 +5,45 @@ has the detail.
 
 ---
 
+## 0.9.1 — 2026-08-31
+
+### A key the engine does not know is now a 400, not a shrug
+
+`{"action":"read"}` used to return `200` with `done: []`. Nothing ran, nothing said
+so, and the page never changed. Someone hit this from another machine and tried three
+times before working out that verbs are keys — `{"read":true}`, not
+`{"action":"read"}`.
+
+```
+before   {"action":"read"}  →  200 {"done":[]}
+after    {"action":"read"}  →  400 unknown key: "action". Verbs go in as keys…
+```
+
+The error names the key, shows the correct shape, and lists what is accepted. A typo
+that returns success is worse than one that returns an error: it sends you looking at
+the browser, the network, the page — anywhere but the request.
+
+🔵 Errors now carry their own status. Everything used to come back as `500`, which
+made a typo look like an outage.
+
+### The HTTP schema is in the skill docs
+
+Both copies described the `wb` CLI and never mentioned `POST /act`, so anyone calling
+the engine directly was guessing. Now the payload for each verb is written down,
+including `{"read":true,"shot":true}` in one call.
+
+🔴 And a rule that had only ever been implied: **before anything you cannot undo, take
+`read` and `shot` together and keep both.** Every silent failure in this file was
+caught by the DOM disagreeing with the pixels or the other way round — text truncated
+to 55 of 92 characters and reported as success, rows two through ten of a form left
+empty. A selector failure looks identical in the DOM whether it was a login wall, a
+modal, or a bot check. One call, not two: two round trips can straddle a change.
+
+🔵 Reported by another agent on this machine, with the reproduction attached. Two of
+the three items were real; the third — that `read` and `shot` could not be combined —
+already worked, and was a gap in the docs rather than the code. That is the same
+defect as the other two, one layer up.
+
 ## 0.9.0 — 2026-08-31
 
 ### `goto` was rejecting pages that worked

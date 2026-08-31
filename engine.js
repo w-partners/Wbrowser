@@ -242,7 +242,22 @@ async function getTab(name, accountHint, strict, agent) {
   //    about:blank where its page had been. Measured 2026-08-24.
   const key = `${agent || ''}::${tabName}`;
   const existing = tabs.get(key);
-  if (existing && !existing.isClosed()) return existing;
+  if (existing && !existing.isClosed()) {
+    // 🔴 Open is not the same as alive. `isClosed()` only catches tabs that went away;
+    //    a tab can stay in the list and answer nothing at all. Measured 2026-08-31:
+    //    navigating to a large text/plain file left the tab with an empty URL and a
+    //    renderer that never replied — every later command, including `eval 1+1`,
+    //    timed out with no explanation, and raw CDP hung on that tab too. The engine
+    //    was healthy and said so; it was holding a dead tab.
+    //    So knock before reusing. One cheap round trip beats an unexplained hang.
+    const alive = await Promise.race([
+      existing.evaluate(() => true).catch(() => false),
+      new Promise((res) => { setTimeout(() => res(false), 1500); }),
+    ]);
+    if (alive) return existing;
+    tabs.delete(key);
+    try { await existing.close({ runBeforeUnload: false }); } catch { /* already gone */ }
+  }
 
   const targetCtx = await pickContext(accountHint, strict);
 
@@ -520,7 +535,26 @@ async function requireMatch(page, selector, verb) {
   }
 }
 
+// 🔴 Every key this command understands. A key that is not here is a mistake, and the
+//    only safe thing to do with a mistake is say so. Reported 2026-08-31: someone read
+//    the docs, sent {"action":"read"}, and got back 200 with `done: []`. Nothing ran,
+//    nothing complained, and it took three attempts to work out why the page never
+//    changed. A typo that returns success is worse than one that returns an error.
+const KNOWN_KEYS = new Set([
+  'goto', 'click', 'type', 'press', 'read', 'shot', 'eval', 'wait',
+  'console', 'errors', 'network', 'tab', 'account', 'agent', 'selector',
+]);
+
 async function act(cmd) {
+  const unknown = Object.keys(cmd || {}).filter((k) => !KNOWN_KEYS.has(k));
+  if (unknown.length) {
+    const err = new Error(
+      `unknown ${unknown.length > 1 ? 'keys' : 'key'}: ${unknown.map((k) => `"${k}"`).join(', ')}. `
+      + 'Verbs go in as keys, not as a value — {"read":true}, not {"action":"read"}. '
+      + `Known keys: ${[...KNOWN_KEYS].join(', ')}.`);
+    err.status = 400;
+    throw err;
+  }
   const tab = cmd.tab || 'main';
   // If account is given explicitly use it, otherwise look the URL up in the mapping.
   const explicit = !!cmd.account;
@@ -662,8 +696,15 @@ async function act(cmd) {
   //    eval/type/press would get no indicator — a tab that submitted 20 entries
   //    actually ended up with no indicator at all.
   if (cmd.agent) {
-    await stampTitle(page, cmd.agent, tab);
-    await showBanner(page, cmd.agent);
+    // 🔴 Cap these. They are cosmetic — a title and a banner — and neither is worth
+    //    hanging the command. A tab that dies between the liveness check above and
+    //    this line leaves them waiting forever, which is how a `goto` to a large
+    //    text/plain file used to swallow every command that followed it.
+    //    Losing the label on a dying tab is fine. Losing the command is not.
+    await Promise.race([
+      (async () => { await stampTitle(page, cmd.agent, tab); await showBanner(page, cmd.agent); })(),
+      new Promise((res) => { setTimeout(res, 5000); }),
+    ]).catch(() => {});
   }
   if (cmd.wait) { await page.waitForTimeout(Math.min(cmd.wait, 15000)); done.push(`wait ${cmd.wait}ms`); }
 
@@ -916,7 +957,10 @@ const server = http.createServer(async (req, res) => {
     res.statusCode = 404;
     res.end(JSON.stringify({ error: 'not found' }));
   } catch (e) {
-    res.statusCode = 500;
+    // 🔵 400 and 500 tell the caller different things: one means "fix your request",
+    //    the other means "something here broke". Sending 500 for both makes a typo
+    //    look like an outage, and the caller goes looking at the engine.
+    res.statusCode = e.status || 500;
     res.end(JSON.stringify({ error: e.message.split('\n')[0] }, null, 2));
   }
 });
