@@ -79,3 +79,21 @@ def test_every_runnable_entry_point_is_guarded():
         if "require('./preflight')" not in js.read_text():
             missing.append(js.name)
     assert not missing, f"entry points with no install guard: {missing}"
+
+
+def test_a_typo_fails_instead_of_printing_help(tmp_path):
+    """🔴 `wb reed` used to print the help text and exit 0, so it looked like it had
+    run and a script wrapping it could not tell. Same shape as the engine accepting
+    {"action":"read"} with a 200 — a mistake that reports success sends you looking
+    at the browser instead of at what you typed.
+    """
+    # 🔵 Run it in the real checkout: the dependency gate answers first in a bare
+    #    clone, and faking node_modules does not fool preflight (it uses
+    #    require.resolve, not a directory check — deliberately).
+    d = ROOT
+    p = run(d, "reed")
+    assert p.returncode != 0, "an unknown command exited 0"
+    assert "No such command" in (p.stdout + p.stderr)
+
+    ok = run(d, "help")
+    assert ok.returncode == 0, "help should still succeed"

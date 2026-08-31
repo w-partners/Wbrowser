@@ -5,6 +5,25 @@ has the detail.
 
 ---
 
+## 0.9.8 — 2026-08-31
+
+### A mistyped command printed the help and exited 0
+
+`wb reed` showed the help text and reported success. Nothing said the command did not
+exist, so it read as "it ran and did nothing" — and a script wrapping `wb` could not
+tell the difference, because the exit code was 0.
+
+```
+before   wb reed → (help text)                      exit 0
+after    wb reed → ❌ No such command: reed         exit 1
+                   (help text)
+```
+
+🔵 Third instance of one shape today, after `{"action":"read"}` returning 200 and a
+clone with no dependencies reporting `✅ Engine`: **a mistake that reports success
+sends you looking at the browser, the network, the page — anywhere except what you
+typed.** `help` still exits 0; it is not a mistake.
+
 ## 0.9.7 — 2026-08-31
 
 ### A missing argument answered with a Python traceback

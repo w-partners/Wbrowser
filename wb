@@ -451,5 +451,14 @@ print('Saved:', '$OUT')
     [ "$KILLED" = 1 ] && echo "· Engine taken down" || echo "· Engine was not running"
     echo "🔵 Leaving Chrome alone (it may be a user window). To turn it off, close the window."
     ;;
-  *) awk 'NR>1 && /^#/ {sub(/^# ?/,""); print; next} NR>1 {exit}' "${BASH_SOURCE[0]}" ;;
+  help|--help|-h)
+    awk 'NR>1 && /^#/ {sub(/^# ?/,""); print; next} NR>1 {exit}' "${BASH_SOURCE[0]}" ;;
+  # 🔴 A typo used to print the help and exit 0 — so `wb reed` looked like it had run,
+  #    and a script wrapping it could not tell the difference. Same shape as the engine
+  #    accepting {"action":"read"} with a 200: a mistake that reports success sends you
+  #    looking at the browser instead of at what you typed.
+  *)
+    printf '❌ No such command: %s\n\n' "$cmd" >&2
+    awk 'NR>1 && /^#/ {sub(/^# ?/,""); print; next} NR>1 {exit}' "${BASH_SOURCE[0]}" >&2
+    exit 1 ;;
 esac
