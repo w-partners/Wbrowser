@@ -14,11 +14,12 @@
 //    "a token is required" (measured). It is not a security flaw, but the user never
 //    sees the real cause and gets only a stack trace. Check first and explain in
 //    human words.
+require('./preflight').requireInstalled();
+// 🔵 The MCP SDK is only needed here, so it stays a local check.
 try {
   require.resolve('@modelcontextprotocol/sdk/server/index.js');
-  require.resolve('playwright');
 } catch {
-  console.error('❌ Dependencies are not installed.');
+  console.error('❌ The MCP SDK is not installed.');
   console.error('   Run this in this directory:  npm install');
   process.exit(1);
 }

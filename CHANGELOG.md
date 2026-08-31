@@ -5,6 +5,43 @@ has the detail.
 
 ---
 
+## 0.9.4 — 2026-08-31
+
+### `wb` reported success on a clone that had installed nothing — since 0.1.0
+
+Clone the repository, skip `npm install`, and run `./wb status`. It printed
+`✅ Chrome · ✅ Engine` and looked completely ready. `./wb go <url>` then opened a
+page and reported it worked.
+
+Nothing was installed. Every command here talks to an engine over HTTP, so what
+answered was **whoever else had an engine on that port** — another user, another
+project, another checkout. Commands ran against their browser, and the output looked
+exactly like success.
+
+```
+before   fresh clone → ./wb status → ✅ Chrome · ✅ Engine   (nothing installed)
+after    fresh clone → ./wb status → ❌ Dependencies are not installed in this directory.
+                                        cd <dir> && npm install
+```
+
+**Present since 0.1.0 (2026-08-23).** Only `wb up` ever checked, so anyone who started
+with `status` or `go` never saw the message.
+
+🔵 **`setup.sh` users are unaffected** — the one-line installer in the README runs
+`npm install` itself and stops with an explanation if it fails. This hit people who
+cloned the repo and installed by hand.
+
+🔴 The check now runs **once, before the command is dispatched**, not per command. The
+first attempt gated each verb by name and left `shot` and `tabs` open — a fresh clone
+could still screenshot a stranger's screen. Gating by enumeration means the next verb
+added is unguarded by default.
+
+🔴 And there is now **one** answer to "can this run here?" (`preflight.js`). It had
+been three: a directory check in `wb`, `require.resolve` in `engine.js`, another in
+`mcp-server.js`. Three tests for one fact can disagree, and when they do the one that
+passes is whichever you happened to run — which is this bug's own shape, one level up.
+A test asserts the check has not leaked back into those files.
+
 ## 0.9.3 — 2026-08-31
 
 ### The version field now has a test that it reports the *running* code

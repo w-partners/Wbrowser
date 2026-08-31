@@ -16,14 +16,9 @@
 const http = require('http');
 
 // 🔴 Without playwright you only get a stack trace and never the words
-//    "run npm install" (measured). Replace it with human-readable guidance.
-try {
-  require.resolve('playwright');
-} catch {
-  console.error('❌ playwright is not installed.');
-  console.error('   Run this in this directory:  npm install');
-  process.exit(1);
-}
+//    "run npm install" (measured). preflight.js holds the single test and the single
+//    message — see the note there for why this is not inlined.
+require('./preflight').requireInstalled();
 
 const { chromium } = require('playwright');
 const { appendJournal } = require('./journal');

@@ -45,6 +45,25 @@ _state_dir() {
 mkdir -p "$(_state_dir)" 2>/dev/null
 LOG="$(_state_dir)/engine.log"
 
+# 🔴 A fresh clone has no node_modules, and every command here talks to an engine
+#    over HTTP — so if someone else's engine happens to be on the port, a clone that
+#    installed nothing answers "✅ Engine" and drives THEIR browser. Measured
+#    2026-08-31 on a clean clone: `wb status` said everything was fine and `wb go`
+#    opened a page in another user's Chrome. Nothing said npm install was missing,
+#    because only `wb up` ever checks.
+#    So check here, once, before anything is sent anywhere.
+#    🔴 The test and the wording live in preflight.js, not here. They were in three
+#       places with three different tests (a directory check here, require.resolve in
+#       each entry point), and three tests for one fact can disagree — which is the
+#       same shape as the bug this guard exists for.
+_needs_install() {
+  node "$DIR/preflight.js" 2>/dev/null && return 1
+  # 🔵 --explain prints the same words the JS entry points print. Keeping the wording
+  #    in one file is the point; duplicating it here would re-create the split.
+  node "$DIR/preflight.js" --explain 2>&1 >/dev/null
+  return 0
+}
+
 _post() {   # _post '<json>'
   curl -s --max-time "${WIN_TIMEOUT:-45}" -X POST "$ENGINE/act" \
     -H 'Content-Type: application/json' -d "$1"
@@ -101,6 +120,15 @@ done
 set -- "${ARGS[@]+"${ARGS[@]}"}"
 
 cmd="${1:-status}"; shift || true
+
+# 🔴 One gate, before the dispatch. Gating command by command means the next command
+#    added is unguarded by default — `shot` and `tabs` were, and on a fresh clone they
+#    reached a stranger's engine and captured their screen. Only `up` and `version` run
+#    without dependencies: one installs nothing but explains, the other just reads a file.
+case "$cmd" in
+  up|version|--version|-v|help|--help|-h) ;;
+  *) _needs_install && exit 1 ;;
+esac
 
 case "$cmd" in
   up)
@@ -168,6 +196,10 @@ case "$cmd" in
     fi
     ;;
   status)
+    # 🔴 Say this first, because everything below it would otherwise be a lie: without
+    #    dependencies nothing here can run, and an engine answering on the port is
+    #    someone else's — a clean clone printed "✅ Engine" and meant another person's
+    #    browser (measured 2026-08-31).
     # 🔵 Don't judge with tasklist/netstat — under mirrored WSL all three fail to see
     #    Chrome while CDP responds fine (measured 2026-08-23).
     _cdp_up    && echo "✅ Chrome (CDP $CDP)" || echo "❌ Chrome — ./wb up"
