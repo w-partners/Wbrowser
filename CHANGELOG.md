@@ -5,6 +5,28 @@ has the detail.
 
 ---
 
+## 0.11.0 — 2026-09-01
+
+### The landing page tells you when an update is waiting
+
+A person opening a browser sees the landing page — it is the one screen that comes up
+every time. Until now nothing there said the install was behind, so a machine could run
+an old copy for weeks while fixes piled up in releases. (`wb version` reports it, but
+only if you think to ask.)
+
+The page now checks the latest release and, if the running version is older, shows a
+notice with the exact command to update:
+
+```
+🔵 An update is available. You have v0.9.6, latest is v0.11.0.
+   cd <your Wbrowser folder> && git pull && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install
+```
+
+🔵 It shows nothing when you are current, and nothing when GitHub can't be reached or
+is rate-limited — a missing notice is better than a wrong one. `launch.js` stamps the
+running version into the page on open; if that ever fails to happen the check disables
+itself rather than guess.
+
 ## 0.10.2 — 2026-09-01
 
 ### Tab labels stopped saying "agent@you" for every session

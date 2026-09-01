@@ -78,6 +78,48 @@
       🔴 <b>The agent will not type passwords for you.</b> That's forbidden by policy.
       Sign in yourself in this window; the agent only reuses the session afterwards.
     </div>
+
+    <!-- Update notice. Hidden until the check below finds a newer release, so a
+         current install shows nothing. This is the one place a person reliably
+         sees every time a browser opens, which is why the notice lives here. -->
+    <div class="update" id="wb-update" style="display:none;margin-top:18px;padding:14px 16px;
+         border-radius:10px;background:#fff3cd;border:1px solid #ffe08a;color:#5c4600;">
+      <b>🔵 An update is available.</b>
+      You have <span id="wb-have"></span>, latest is <span id="wb-latest"></span>.
+      <div style="margin-top:8px;font-family:ui-monospace,monospace;font-size:13px;
+           background:#00000010;padding:8px 10px;border-radius:6px;">
+        cd &lt;your Wbrowser folder&gt; &amp;&amp; git pull &amp;&amp; PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install
+      </div>
+    </div>
   </div>
+
+  <script>
+    // The version this page was shipped with — launch.js writes it in on copy.
+    // "0.0.0" means it was opened straight from the repo without that step; we skip
+    // the check rather than cry wolf.
+    var HAVE = "__WBROWSER_VERSION__";
+    (function () {
+      if (!HAVE || HAVE === "0.0.0" || HAVE.indexOf("__") === 0) return;
+      // GitHub's release API needs no key for public repos. If the network is down or
+      // rate-limited, we simply show nothing — a missing notice is better than a wrong one.
+      fetch("https://api.github.com/repos/w-partners/Wbrowser/releases/latest")
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (d) {
+          if (!d || !d.tag_name) return;
+          var latest = d.tag_name.replace(/^v/, "");
+          if (latest === HAVE) return;                 // up to date
+          // Only nudge when latest is actually newer, never older (a dev build).
+          var a = HAVE.split(".").map(Number), b = latest.split(".").map(Number);
+          for (var i = 0; i < 3; i++) {
+            if ((b[i] || 0) > (a[i] || 0)) break;
+            if ((b[i] || 0) < (a[i] || 0)) return;
+          }
+          document.getElementById("wb-have").textContent = "v" + HAVE;
+          document.getElementById("wb-latest").textContent = "v" + latest;
+          document.getElementById("wb-update").style.display = "block";
+        })
+        .catch(function () { /* offline — say nothing */ });
+    })();
+  </script>
 </body>
 </html>

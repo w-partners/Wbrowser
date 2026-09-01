@@ -268,7 +268,13 @@ if (require.main !== module) return;
     const src = path.join(__dirname, 'home.html');
     if (fs.existsSync(src)) {
       const dst = path.join(PROFILE_DIR, 'home.html');
-      fs.copyFileSync(src, dst);
+      // 🔵 Stamp the running version into the page so its update check knows what
+      //    "you have" is. Copying verbatim would leave the placeholder and the check
+      //    would skip — which is the safe default if this ever fails.
+      let ver = '0.0.0';
+      try { ver = require('./package.json').version || ver; } catch { /* keep default */ }
+      const html = fs.readFileSync(src, 'utf8').replace(/__WBROWSER_VERSION__/g, ver);
+      fs.writeFileSync(dst, html);
       const p = CHROME_IS_WINDOWS && dst.startsWith('/mnt/') ? toWindowsPath(dst) : dst;
       startUrl = `file:///${p.replace(/\\/g, '/')}`;
     }
