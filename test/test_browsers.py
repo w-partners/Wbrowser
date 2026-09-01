@@ -82,3 +82,14 @@ def test_newtab_is_a_known_key():
     keys = _re.search(r"KNOWN_KEYS = new Set\(\[(.*?)\]\)", src, _re.S).group(1)
     for k in ("newtab", "fullPage", "limit", "filter"):
         assert f"'{k}'" in keys, f"{k} is handled but not in KNOWN_KEYS"
+
+
+def test_agent_name_walks_the_process_tree_not_just_the_parent():
+    # 🔴 Reported 2026-09-01: seven tabs read "agent@pasia" because the name was taken
+    #    from the immediate parent only, and an agent often runs wb from a folder that
+    #    is not its own AGENT/<name> dir. The session's dir is somewhere up the tree.
+    src = (ROOT / "wb").read_text()
+    assert 'for _ in 1 2 3 4 5' in src, "only checks the immediate parent"
+    # 🔴 And PPid must come from /status, not field 4 of /stat — a process name with a
+    #    space or ")" shifts /stat's fields and the walk climbs the wrong tree.
+    assert '/status' in src and 'PPid:' in src

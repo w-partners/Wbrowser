@@ -5,6 +5,25 @@ has the detail.
 
 ---
 
+## 0.10.2 — 2026-09-01
+
+### Tab labels stopped saying "agent@you" for every session
+
+Seven tabs in one window all read `[1-3] agent@pasia`, so the label told you nothing
+about which session opened which tab. The name is derived from the session's
+`AGENT/<name>` directory, but it was only read from the immediate parent process — and
+an agent often runs `wb` from a working folder that is not that directory. When the
+parent happened to be elsewhere, it fell back to `agent@<user>`, the same for everyone.
+
+It now walks up the process tree (up to eight hops) to the nearest ancestor whose
+working directory is the session's, so the real name — `wbrowser-primary`,
+`seoul-primary` — lands on the tab. A fresh clone with no such directory anywhere on
+the tree still falls back, which is correct there.
+
+🔵 The parent's `PPid` is read from `/proc/<pid>/status`, not field 4 of `/stat`: a
+process whose name contains a space or a `)` shifts every field of `/stat`, and the
+walk would climb the wrong tree.
+
 ## 0.10.1 — 2026-09-01
 
 ### Tab coordinates are permanent — `[1-3]` stays the same tab

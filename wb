@@ -127,11 +127,22 @@ _agent_name() {
   case "$PWD" in
     */AGENT/*|*/agents/*) echo "$PWD" | sed -E 's#.*/(AGENT|agents)/([^/]+).*#\2#'; return ;;
   esac
-  # If the caller invoked us from somewhere else, look at the parent shell's working directory
-  PARENT_CWD="$(readlink -f "/proc/$PPID/cwd" 2>/dev/null)"
-  case "$PARENT_CWD" in
-    */AGENT/*|*/agents/*) echo "$PARENT_CWD" | sed -E 's#.*/(AGENT|agents)/([^/]+).*#\2#'; return ;;
-  esac
+  # Walk up the process tree, not just the immediate parent. An agent often runs `wb`
+  # from a working folder that is not its own AGENT/<name> dir — measured 2026-09-01,
+  # where seven tabs read "agent@pasia" because only $PPID was checked and it happened
+  # to be elsewhere, while the session's actual cwd two hops up was AGENT/wbrowser-primary.
+  # Its own directory is somewhere on the chain; find the nearest ancestor that has it.
+  _p="$PPID"
+  for _ in 1 2 3 4 5 6 7 8; do
+    _cwd="$(readlink -f "/proc/$_p/cwd" 2>/dev/null)"
+    case "$_cwd" in
+      */AGENT/*|*/agents/*) echo "$_cwd" | sed -E 's#.*/(AGENT|agents)/([^/]+).*#\2#'; return ;;
+    esac
+    # 🔴 Read PPid from /status, not field 4 of /stat: a process whose name contains a
+    #    space or ")" shifts every field of /stat and the walk climbs the wrong tree.
+    _p="$(awk '/^PPid:/{print $2}' "/proc/$_p/status" 2>/dev/null)"
+    { [ -z "$_p" ] || [ "$_p" = 0 ] || [ "$_p" = 1 ]; } && break
+  done
   # 🔴 Last resort: name it after the host user, never empty.
   #    An empty name used to be returned here on the reasoning that a bogus name is worse
   #    than none. It is not: the label is the whole point of driving a window the human can
