@@ -56,3 +56,29 @@ def test_an_unknown_name_is_an_error_with_a_hint(tmp_path):
 def test_a_number_cannot_be_a_browser_name(tmp_path):
     # otherwise `wb -b 2` would be ambiguous: the browser numbered 2, or one named "2"?
     assert run(tmp_path, "add", "2").returncode != 0
+
+
+# --- tab coordinate is a permanent id, not a position -----------------------
+# 🔴 Reported 2026-09-01: order-based numbering renumbers when a tab closes, so
+#    "[1-3], look at that one" pointed at a different tab minute to minute. The id
+#    must be assigned once and never reused. Verified end-to-end against the e2e
+#    browser in the release checks; here we assert the engine has the machinery.
+import re as _re
+
+
+def test_engine_assigns_permanent_tab_ids():
+    src = (ROOT / "engine.js").read_text()
+    # a monotonic counter, seeded so restarts do not reuse an id
+    assert "nextTabId" in src and "tabSeq += 1" in src
+    # the coordinate uses the id, not the page's position in the list
+    assert "idOf(page)" in src
+    assert "pages.indexOf(page)" not in src, "coordinate still uses position, which renumbers"
+
+
+def test_newtab_is_a_known_key():
+    # 🔴 newtab was handled by the engine but missing from KNOWN_KEYS, so {"newtab":true}
+    #    came back 400 — measured 2026-09-01.
+    src = (ROOT / "engine.js").read_text()
+    keys = _re.search(r"KNOWN_KEYS = new Set\(\[(.*?)\]\)", src, _re.S).group(1)
+    for k in ("newtab", "fullPage", "limit", "filter"):
+        assert f"'{k}'" in keys, f"{k} is handled but not in KNOWN_KEYS"

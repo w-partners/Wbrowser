@@ -5,6 +5,33 @@ has the detail.
 
 ---
 
+## 0.10.1 — 2026-09-01
+
+### Tab coordinates are permanent — `[1-3]` stays the same tab
+
+The tab number in `[1-3]` was the tab's position in the list, so closing tab 2 slid
+everything after it down a number: "look at [1-3]" pointed at a different tab a minute
+later. The number is now a per-tab id, assigned once, never reused. Close tab 2 and the
+others keep their numbers; the next tab opened is 4, not a recycled 3. The id is stored
+in the page itself, so an engine restart does not renumber it.
+
+### `wb close` was matching nothing, and always said "0"
+
+Two bugs, both from the label change in 0.10.0:
+
+- `close` looked for a title starting with `[agent]`, but the label is now
+  `[1-3] agent …` — so it matched no tabs and closed none. It matches the agent after
+  the coordinate now.
+- The "Closed N tabs" line always printed `0`, because the counter was never
+  incremented. This is the tool for the runaway-tab problem — an agent that keeps
+  opening tabs can now actually clear its own.
+
+### `{"newtab": true}` was rejected as unknown
+
+The engine handled `newtab` but it was missing from the accepted-keys list added in
+0.9.1, so `{"newtab": true}` came back `400`. Three others handled the same way
+(`fullPage`, `limit`, `filter`) were missing too. All added.
+
 ## 0.10.0 — 2026-09-01
 
 ### Several logged-in browsers at once, referred to by number

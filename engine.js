@@ -28,6 +28,13 @@ const PORT = process.env.WBROWSER_PORT || 7981;
 //    already in; 2, 3… are the named ones. A tab then reads `[1-2]` — browser 1,
 //    tab 2 — which is how a person refers to it out loud.
 const BROWSER_NUM = process.env.WBROWSER_BROWSER_NUM || '1';
+// 🔵 A tab's permanent id, monotonic and never reused. A person points at a tab as
+//    [browser-id] — [1-3] is always the same tab, even after tab 2 is closed and
+//    others open. Order-based numbering could not do that (close one and the rest
+//    renumber), which is why "[1-3], look at that one" was ambiguous. The counter is
+//    seeded from tabs already open so ids stay unique across an engine restart.
+let tabSeq = 0;
+function nextTabId() { tabSeq += 1; return tabSeq; }
 // 🔵 CDP address. Accepts both WBROWSER_CDP (full URL) and WBROWSER_CDP_PORT (port only).
 //    launch.js uses _PORT, and if the engine ignores it then whenever the user changes
 //    the port the engine silently attaches to the default 9222 (= someone else's
@@ -275,9 +282,20 @@ async function getTab(name, accountHint, strict, agent) {
       //    scan blocks forever. Measured 2026-08-24: the request never returned at all.
       //    A probe that misses is fine (we just open a new tab); a probe that hangs is not.
       const owner = await Promise.race([
-        p.evaluate(() => ({ agent: window.__wbrowserAgent, tab: window.__wbrowserTab })),
+        p.evaluate(() => ({
+          agent: window.__wbrowserAgent, tab: window.__wbrowserTab, mark: window.__wbrowserMark,
+        })),
         new Promise((res) => { setTimeout(() => res(null), 800); }),
       ]);
+      // 🔵 Restore the tab's permanent id from the page itself, so an engine restart
+      //    does not renumber it. The mark reads "1-3"; the id is the part after the dash.
+      if (owner && owner.mark && !tabIds.has(p)) {
+        const prev = parseInt(String(owner.mark).split('-')[1], 10);
+        if (Number.isInteger(prev)) {
+          tabIds.set(p, prev);
+          if (prev > tabSeq) tabSeq = prev;      // never hand out an id already in use
+        }
+      }
       if (owner && owner.agent === (agent || '') && owner.tab === tabName) {
         tabs.set(key, p);
         wireLogging(p);
@@ -413,18 +431,18 @@ const titleScripted = new WeakSet();
 //    · Registering via addInitScript applies it automatically to **every subsequent
 //      navigation** as well.
 //    · Re-entrancy guard: the observer fires even while we are writing, so a flag blocks it.
-// 🔵 The coordinate for a tab: "<browser>-<tab>", e.g. "1-2". The tab number is the
-//    page's position in its context's list — the same numbering `wb tabs` prints, so
-//    what you see there and what the title says agree. Best-effort: if the page is not
-//    found (mid-close), fall back to the browser number alone.
+// 🔵 The coordinate for a tab: "<browser>-<id>", e.g. "1-3". The id is the permanent
+//    per-tab counter (tabIds), NOT the tab's current position — position renumbers
+//    when a tab closes, which is exactly what made "[1-3]" ambiguous. A tab keeps its
+//    id from when it was opened until it is closed, and the number is never reused.
+const tabIds = new WeakMap();     // Page -> its permanent id
+function idOf(page) {
+  if (!tabIds.has(page)) tabIds.set(page, nextTabId());
+  return tabIds.get(page);
+}
 function coordOf(page) {
-  try {
-    const pages = page.context().pages();
-    const i = pages.indexOf(page);
-    return `${BROWSER_NUM}-${i >= 0 ? i + 1 : '?'}`;
-  } catch {
-    return `${BROWSER_NUM}-?`;
-  }
+  try { return `${BROWSER_NUM}-${idOf(page)}`; }
+  catch { return `${BROWSER_NUM}-?`; }
 }
 
 async function stampTitle(page, agent, tabName, coord) {
@@ -561,6 +579,7 @@ async function requireMatch(page, selector, verb) {
 const KNOWN_KEYS = new Set([
   'goto', 'click', 'type', 'press', 'read', 'shot', 'eval', 'wait',
   'console', 'errors', 'network', 'tab', 'account', 'agent', 'selector',
+  'newtab', 'fullPage', 'limit', 'filter',
 ]);
 
 // 🔴 What is actually running here. Reported 2026-08-31: a fix was released, pulled,
@@ -963,7 +982,8 @@ const server = http.createServer(async (req, res) => {
       const driven = new Map();
       for (const [k, p] of tabs.entries()) if (!p.isClosed()) driven.set(p, k);
       const list = await Promise.all(pages.map(async (p, i) => ({
-        n: i + 1,
+        n: i + 1,                          // position, for /take (which counts from the list)
+        id: idOf(p),                       // 🔵 the permanent id — this is what [1-<id>] shows
         url: p.url(),
         title: await titleOf(p),
         drivenBy: driven.get(p) || null,   // null = nobody is driving it, i.e. it is yours

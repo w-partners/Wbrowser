@@ -501,7 +501,11 @@ try:
 except Exception:
     print("❌ Browser is not running"); sys.exit(1)
 
-mine = [t for t in tabs if me and (t.get("title") or "").startswith(f"[{me}]")]
+# 🔴 The label is now "[<browser>-<id>] <agent> <title>", so match the agent AFTER
+#    the coordinate, not at position 0. The old startswith("[agent]") stopped matching
+#    anything once ids were added to the label — measured 2026-09-01.
+_pat = re.compile(r"^\[[^\]]*\]\s+" + re.escape(me) + r"(\s|$)")
+mine = [t for t in tabs if me and _pat.match(t.get("title") or "")]
 if not mine:
     print(f"· '{me}' has no open tabs"); sys.exit(0)
 # If every tab is mine, leave one behind — otherwise the browser dies.
