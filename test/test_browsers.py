@@ -93,3 +93,18 @@ def test_agent_name_walks_the_process_tree_not_just_the_parent():
     # 🔴 And PPid must come from /status, not field 4 of /stat — a process name with a
     #    space or ")" shifts /stat's fields and the walk climbs the wrong tree.
     assert '/status' in src and 'PPid:' in src
+
+
+def test_roster_lookup_is_gated_and_carries_no_hardcoded_url():
+    # 🔴 The roster fallback must not fire for a plain clone, and must not bake in a
+    #    private endpoint. It runs only when BOTH an instance id and a roster URL are
+    #    present, and the URL comes from the environment / harness file, never a literal.
+    src = (ROOT / "wb").read_text()
+    assert 'AOE_INSTANCE_ID' in src and 'WBROWSER_ROSTER_URL' in src
+    assert '/api/terminals' in src            # built from SELF_PORTAL_URL, not hardcoded host
+    import re
+    # loopback (127.0.0.1) is the engine's own address and fine; a routable IP would
+    # mean a private endpoint was baked in.
+    ips = re.findall(r'https?://(\d+\.\d+\.\d+\.\d+)', src)
+    leaked = [ip for ip in ips if not ip.startswith('127.')]
+    assert not leaked, f"a routable IP leaked into wb: {leaked}"

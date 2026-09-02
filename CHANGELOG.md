@@ -5,6 +5,27 @@ has the detail.
 
 ---
 
+## 0.11.2 — 2026-09-02
+
+### Tabs no longer label themselves "agent@you" when the session runs wb from elsewhere
+
+The tab label takes the session name from its `AGENT/<name>` directory, walking up the
+process tree to find it. But a session that runs `wb` from some other working folder —
+a project subdir, /tmp — can be far enough from that directory that the walk misses,
+and the label falls back to `agent@<user>`, the same for every session. Several tabs
+driven by different sessions all read the same thing, and you could not tell which
+session opened which.
+
+There is now a last resort before that fallback, for orchestration setups only: if the
+session carries an opaque instance id and a roster endpoint is configured, `wb` asks
+the roster for the human-readable name. Measured 2026-09-02: sessions whose cwd had
+moved out of their AGENT dir resolved correctly again.
+
+🔵 A plain clone has neither the id nor a roster, so it skips this entirely and keeps
+the `agent@<user>` fallback — no dependency on any private service enters normal use.
+The roster URL is read from the environment or the harness file, never hardcoded (a
+test checks no routable IP is baked in).
+
 ## 0.11.1 — 2026-09-02
 
 ### The landing page always shows the version, not only when behind

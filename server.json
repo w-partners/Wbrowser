@@ -3,12 +3,12 @@
   "name": "io.github.w-partners/wbrowser",
   "title": "Wbrowser",
   "description": "Drive a real Chrome you signed into yourself — the agent works in its own tab, never the one you are reading",
-  "version": "0.11.1",
+  "version": "0.11.2",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "wbrowser",
-      "version": "0.11.1",
+      "version": "0.11.2",
       "transport": {
         "type": "stdio"
       }
