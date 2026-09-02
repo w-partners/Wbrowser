@@ -85,7 +85,7 @@ def test_newtab_is_a_known_key():
 
 
 def test_agent_name_walks_the_process_tree_not_just_the_parent():
-    # 🔴 Reported 2026-09-01: seven tabs read "agent@pasia" because the name was taken
+    # 🔴 Reported 2026-09-01: seven tabs read "agent@you" because the name was taken
     #    from the immediate parent only, and an agent often runs wb from a folder that
     #    is not its own AGENT/<name> dir. The session's dir is somewhere up the tree.
     src = (ROOT / "wb").read_text()

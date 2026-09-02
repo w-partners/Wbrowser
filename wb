@@ -129,7 +129,7 @@ _agent_name() {
   esac
   # Walk up the process tree, not just the immediate parent. An agent often runs `wb`
   # from a working folder that is not its own AGENT/<name> dir — measured 2026-09-01,
-  # where seven tabs read "agent@pasia" because only $PPID was checked and it happened
+  # where seven tabs read "agent@you" because only $PPID was checked and it happened
   # to be elsewhere, while the session's actual cwd two hops up was AGENT/wbrowser-primary.
   # Its own directory is somewhere on the chain; find the nearest ancestor that has it.
   _p="$PPID"

@@ -31,7 +31,7 @@ itself rather than guess.
 
 ### Tab labels stopped saying "agent@you" for every session
 
-Seven tabs in one window all read `[1-3] agent@pasia`, so the label told you nothing
+Seven tabs in one window all read `[1-3] agent@you`, so the label told you nothing
 about which session opened which tab. The name is derived from the session's
 `AGENT/<name>` directory, but it was only read from the immediate parent process — and
 an agent often runs `wb` from a working folder that is not that directory. When the
