@@ -50,6 +50,16 @@
     <h1>🤖 Wbrowser</h1>
     <p class="sub">A dedicated profile, kept separate from your everyday Chrome. Bookmarks, extensions and logins never mix.</p>
 
+    <!-- Always visible: the running version, a live up-to-date/behind check, and a
+         link to what changed. The banner below only appears when behind; this line is
+         here every time so "what version am I on" is answerable at a glance. -->
+    <div class="verline" style="margin:6px 0 14px;color:#555;font-size:14px;">
+      version <b id="wb-ver">…</b>
+      <span id="wb-state" style="margin-left:8px;"></span>
+      · <a id="wb-changes" href="https://github.com/w-partners/Wbrowser/blob/main/CHANGELOG.md"
+           target="_blank" rel="noopener">what changed</a>
+    </div>
+
     <div class="row">
       <div class="n">1</div>
       <div class="t"><b>Sign in to your accounts here.</b> Gmail or anywhere else — once you log in,
@@ -95,30 +105,48 @@
 
   <script>
     // The version this page was shipped with — launch.js writes it in on copy.
-    // "0.0.0" means it was opened straight from the repo without that step; we skip
-    // the check rather than cry wolf.
+    // "0.0.0" means it was opened straight from the repo without that step.
     var HAVE = "__WBROWSER_VERSION__";
     (function () {
-      if (!HAVE || HAVE === "0.0.0" || HAVE.indexOf("__") === 0) return;
-      // GitHub's release API needs no key for public repos. If the network is down or
-      // rate-limited, we simply show nothing — a missing notice is better than a wrong one.
+      var verEl = document.getElementById("wb-ver");
+      var stateEl = document.getElementById("wb-state");
+      var known = HAVE && HAVE !== "0.0.0" && HAVE.indexOf("__") !== 0;
+
+      // Always show the running version — this line is here whether or not the check
+      // below can reach GitHub.
+      verEl.textContent = known ? ("v" + HAVE) : "unknown (opened from the repo, not installed)";
+      if (!known) return;
+      stateEl.textContent = "· checking for updates…";
+
+      // GitHub's release API needs no key for public repos.
       fetch("https://api.github.com/repos/w-partners/Wbrowser/releases/latest")
-        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
         .then(function (d) {
-          if (!d || !d.tag_name) return;
+          if (!d || !d.tag_name) throw 0;
           var latest = d.tag_name.replace(/^v/, "");
-          if (latest === HAVE) return;                 // up to date
-          // Only nudge when latest is actually newer, never older (a dev build).
           var a = HAVE.split(".").map(Number), b = latest.split(".").map(Number);
+          var newer = false;
           for (var i = 0; i < 3; i++) {
-            if ((b[i] || 0) > (a[i] || 0)) break;
-            if ((b[i] || 0) < (a[i] || 0)) return;
+            if ((b[i] || 0) > (a[i] || 0)) { newer = true; break; }
+            if ((b[i] || 0) < (a[i] || 0)) break;
           }
+          // Point "what changed" at the latest release notes specifically.
+          document.getElementById("wb-changes").href =
+            "https://github.com/w-partners/Wbrowser/releases/tag/" + d.tag_name;
+          if (!newer) {
+            stateEl.innerHTML = "· <span style='color:#2e7d32'>up to date</span>";
+            return;
+          }
+          stateEl.innerHTML = "· <span style='color:#b26a00'>v" + latest + " available</span>";
           document.getElementById("wb-have").textContent = "v" + HAVE;
           document.getElementById("wb-latest").textContent = "v" + latest;
           document.getElementById("wb-update").style.display = "block";
         })
-        .catch(function () { /* offline — say nothing */ });
+        .catch(function (why) {
+          // Could not ask — say so plainly rather than implying you are current.
+          stateEl.innerHTML = "· <span style='color:#888'>could not check for updates"
+            + (why === 403 ? " (rate-limited, try later)" : "") + "</span>";
+        });
     })();
   </script>
 </body>

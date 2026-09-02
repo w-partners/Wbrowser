@@ -5,6 +5,30 @@ has the detail.
 
 ---
 
+## 0.11.1 — 2026-09-02
+
+### The landing page always shows the version, not only when behind
+
+0.11.0 added an update banner, but it appeared *only* when the install was out of
+date — so on a current machine the page said nothing about the version at all, and
+someone asking "what am I running? is there anything newer? where are the notes?"
+got no answer. It also stayed silent when GitHub could not be reached, which reads
+the same as "you are current" when it is not.
+
+The page now shows, every time, a line under the title:
+
+    version v0.11.1 · up to date · what changed
+    version v0.9.6  · v0.11.1 available · what changed   (plus the update command)
+    version v0.9.6  · could not check for updates (rate-limited, try later)
+
+- the running version, always;
+- the result of the check spelled out — up to date, an update available, or could
+  not check (never silence that looks like "fine");
+- **what changed**, linking to the latest release's notes.
+
+Opened from the repo without installing, it says `unknown` and checks nothing — no
+false "update available".
+
 ## 0.11.0 — 2026-09-01
 
 ### The landing page tells you when an update is waiting

@@ -27,7 +27,25 @@ def test_launch_stamps_the_running_version_into_the_page():
 
 
 def test_a_missing_version_disables_the_check_rather_than_crying_wolf():
-    # if the stamp never happened, HAVE stays "0.0.0" / the placeholder and the script
-    # returns early — a wrong "update available" is worse than none.
+    # if the stamp never happened, HAVE stays "0.0.0" / the placeholder: the page shows
+    # "unknown" and never a wrong "update available".
     html = (ROOT / "home.html").read_text()
-    assert '"0.0.0"' in html and 'indexOf("__") === 0' in html
+    assert '"0.0.0"' in html and 'indexOf("__")' in html
+    assert "unknown" in html
+
+
+
+def test_the_running_version_is_always_shown():
+    # Not only when behind: "what version am I on" must be answerable every time,
+    # even when GitHub cannot be reached.
+    html = (ROOT / "home.html").read_text()
+    assert 'id="wb-ver"' in html
+    # three outcomes are spelled out: up to date, an update is available, could not check
+    assert "up to date" in html
+    assert "could not check" in html
+
+
+def test_there_is_a_link_to_what_changed():
+    html = (ROOT / "home.html").read_text()
+    assert "CHANGELOG" in html or "releases/tag" in html
+    assert 'id="wb-changes"' in html
