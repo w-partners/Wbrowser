@@ -106,6 +106,21 @@ wb logs             # engine log
 🔵 `pageerror` (uncaught exceptions) never reaches `console.error`. `wb console`
 returns both.
 
+### When `read` times out but the page is fine
+
+If `read` times out and the message says Chrome answers raw CDP instantly, the page is
+not the problem — playwright cannot reach its execution context because *utility worlds*
+from earlier connections have built up inside Chrome (one per frame per connection, held
+until Chrome restarts). **Restart Chrome (`wb up`); do not retry** — each attempt adds
+another world and moves it further from working. This piles up fastest from repeated
+reconnects (many `wb up`/restart cycles, or `kill -9` on the engine), not from normal
+use, which attaches once and reuses it.
+
+🔵 On WSL with Chrome running on the Windows side, a tab pointed at `127.0.0.1:<port>`
+resolves to Windows itself and can hang loading forever; while that tab is open, engine
+calls slow down. Close the tab, or use the machine's real/Tailscale address instead of
+loopback.
+
 ## Tabs
 
 ```bash

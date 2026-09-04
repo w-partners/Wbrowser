@@ -93,6 +93,23 @@ def test_engine_opens_new_window_via_cdp_not_newpage():
     assert "Target.createTarget" in src and "newWindow: true" in src
 
 
+def test_read_timeout_does_not_assert_the_page_changed():
+    # 🔴 Reported 2026-09-04: read timed out on a small, static page (1ms of real DOM
+    #    work), and the old message "the page kept changing while it was being read"
+    #    sent the reporter hunting for an infinite re-render that did not exist. The
+    #    timeout has two causes and the message must not assert the one it did not see.
+    src = (ROOT / "engine.js").read_text()
+    # the old assertive wording is gone
+    assert "the page kept changing while it was being read" not in src
+    # the timeout branch distinguishes a stalled connection (utility worlds) from a
+    # genuinely changing page — and detects it WITHOUT opening a new connection (which
+    # would add another world), by checking the raw CDP endpoint answers fast.
+    assert "utility worlds" in src
+    assert "/json/version" in src  # the world-free liveness probe reused in the read path
+    # and it does not claim the page was changing as fact
+    assert "was not confirmed to be changing" in src
+
+
 def test_agent_name_walks_the_process_tree_not_just_the_parent():
     # 🔴 Reported 2026-09-01: seven tabs read "agent@you" because the name was taken
     #    from the immediate parent only, and an agent often runs wb from a folder that

@@ -847,12 +847,39 @@ async function act(cmd) {
     //    keeps growing while it walks — x.com/home never returned, not even at 180s.
     //    goto has a 30s guard; this had none, so the guard on one step was undone by
     //    the next.
+    const TIMED_OUT = Symbol('read-timeout');
     const summary = await Promise.race([
       summarize(page).catch((e) => ({ _failed: e.message.split('\n')[0] })),
-      new Promise((res) => { setTimeout(() => res({ _failed: 'read: timed out after 30s — the page kept changing while it was being read (an endless feed does this)' }), 30000); }),
+      new Promise((res) => { setTimeout(() => res(TIMED_OUT), 30000); }),
     ]);
-    if (summary && summary._failed) result.readError = summary._failed;
-    else result.page = summary;
+    if (summary === TIMED_OUT) {
+      // 🔴 Do not blame the page. `summarize` not returning in 30s has two very different
+      //    causes and the message must not assert one it did not observe. Reported
+      //    2026-09-04: read timed out on a small, static page (measured 1ms of actual
+      //    DOM work), and the old wording — "the page kept changing" — sent the reporter
+      //    hunting for an infinite re-render in their own code that was not there.
+      //    The other cause is playwright's execution-context path being stalled by
+      //    accumulated utility worlds, which we can detect WITHOUT adding one: if the raw
+      //    CDP endpoint answers instantly while page.evaluate hangs, Chrome is fine and
+      //    the fault is the connection. Restarting Chrome is the only thing that clears it.
+      let cdpFast = false;
+      try {
+        const r = await fetch(`${CDP}/json/version`, { signal: AbortSignal.timeout(2000) });
+        cdpFast = r.ok;
+      } catch { /* leave false */ }
+      result.readError = cdpFast
+        ? 'read: timed out after 30s. Chrome answers raw CDP instantly, so the page is '
+          + 'fine — playwright cannot reach its execution context, usually because utility '
+          + 'worlds from earlier connections have built up. Restart Chrome ("wb up") to '
+          + 'clear them; do not retry, each attempt adds more. (Not an endless feed.)'
+        : 'read: timed out after 30s — the page may still be changing as it is read (an '
+          + 'endless feed does this), or the read did not return. The page was not '
+          + 'confirmed to be changing; this is what timed out, not what was observed.';
+    } else if (summary && summary._failed) {
+      result.readError = summary._failed;
+    } else {
+      result.page = summary;
+    }
   }
   if (cmd.shot) {
     try {

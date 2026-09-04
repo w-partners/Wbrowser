@@ -5,6 +5,27 @@ has the detail.
 
 ---
 
+## 0.12.1 — 2026-09-04
+
+### `read` no longer blames the page for a timeout it did not observe
+
+A `read` that timed out always said *"the page kept changing while it was being read (an
+endless feed does this)"* — but that is one of two causes, and the message asserted it as
+fact. Reported 2026-09-04: `read` timed out on a small, static page (measured 1ms of real
+DOM work), and the wording sent the reporter hunting for an infinite re-render in their own
+code that was not there.
+
+The real cause was the other one: playwright could not reach the page's execution context
+because *utility worlds* from earlier connections had piled up (Chrome holds one per frame
+per connection until it restarts). Now, when `read` times out, the engine checks whether
+raw CDP still answers instantly — and if it does, it says Chrome is fine and the connection
+is stalled, name the utility-world buildup, and tell you to restart Chrome (not retry).
+When it cannot tell, it says the page *may* still be changing **or** the read did not
+return — no longer asserting a cause it did not see. Detection adds no new connection, so
+it does not make the buildup worse.
+
+Fix only; no API change.
+
 ## 0.12.0 — 2026-09-04
 
 ### One agent, two tabs — now splittable into side-by-side windows (`--window`)
