@@ -49,7 +49,7 @@ const tabs = new Map();          // name -> page
 // The CDP connection can drop (Chrome quits / restarts). Check on every request
 // whether it is still alive and reattach if it died — so we never fail silently
 // on a dead handle.
-async function connect() {
+async function connect(_reconnecting) {
   if (browser && browser.isConnected()) return;
   try {
     browser = await chromium.connectOverCDP(CDP, { timeout: 10000 });
@@ -72,21 +72,37 @@ async function connect() {
         const r = await fetch(`${CDP}/json/version`, { signal: AbortSignal.timeout(2000) });
         reachable = r.ok;
       } catch { /* leave it false */ }
+      if (reachable && !_reconnecting) {
+        // 🔵 Two different faults look identical here — a connectOverCDP timeout while
+        //    Chrome answers raw CDP — and they want opposite responses:
+        //      • utility-world buildup: only a Chrome restart clears it; reconnecting
+        //        just adds another world and fails again.
+        //      • a half-dead browser websocket: the socket playwright holds went silently
+        //        one-way (proxy recycle / idle timeout — common when the CDP link crosses
+        //        a network boundary, e.g. Windows Chrome ↔ WSL2 over Tailscale). Reported
+        //        2026-09-04: connectOverCDP timed out for hours while raw CDP stayed instant.
+        //        A single fresh connectOverCDP on a NEW socket recovers it.
+        //    So try to reconnect exactly ONCE: drop the stale browser and reconnect. If
+        //    that succeeds it was half-dead (recovered); if it times out again it is world
+        //    buildup, and only then do we tell the caller to restart Chrome. The one retry
+        //    costs one extra world, which is the price of telling the two apart.
+        console.error(`[reconnect] ${new Date().toISOString()} connectOverCDP timed out but raw CDP is up — dropping the browser handle and reconnecting once`);
+        try { if (browser) await browser.close(); } catch { /* going away */ }
+        browser = null; ctx = null;
+        return connect(true);
+      }
       if (reachable) {
-        // 🔴 Say "do not retry" out loud. Retrying is the obvious thing to do, and here
-        //    it is the wrong thing: every attempt leaves another world behind, so the
-        //    act of checking makes the problem worse. Measured 2026-08-25: 723 -> 911
-        //    in twenty minutes, almost entirely from two people diagnosing it.
-        // 🔵 Action first, explanation after. Someone hitting this is mid-task and will
-        //    read one line before deciding what to do — and the obvious decision (retry)
-        //    is the harmful one. Put the stop and the fix where they cannot be missed.
+        // 🔴 Reached here only after the reconnect above already failed — so it is not a
+        //    half-dead socket (a fresh one would have worked). Say "do not retry" out loud:
+        //    retrying is the obvious move and the wrong one, because every attempt leaves
+        //    another world behind. Measured 2026-08-25: 723 -> 911 in twenty minutes,
+        //    almost entirely from two people diagnosing it.
         throw new Error(
           'Do not retry — restart Chrome. Close Chrome fully and run "wb up". '
-          + 'Chrome is answering but cannot be attached to: playwright contexts from '
-          + 'earlier connections have built up, and Chrome holds them until it exits. '
-          + 'Every further attempt adds more, so retrying moves this further from '
-          + 'working. Only a Chrome restart clears them. '
-          + `(original: ${e.message.split('\n')[0]})`,
+          + 'Chrome is answering but cannot be attached to even on a fresh connection: '
+          + 'playwright contexts from earlier connections have built up, and Chrome holds '
+          + 'them until it exits. Every further attempt adds more. Only a Chrome restart '
+          + `clears them. (original: ${e.message.split('\n')[0]})`,
         );
       }
     }

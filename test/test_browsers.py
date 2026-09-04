@@ -118,6 +118,29 @@ def test_engine_reaps_agent_tabs_but_never_marked_by_no_one():
     assert src.count("reapAgentTabs(") >= 2, "reaper not called from both newtab and getTab paths"
 
 
+def test_connect_reconnects_once_before_blaming_utility_worlds():
+    # 🔴 Reported 2026-09-04: a browser websocket went half-dead — connectOverCDP timed out
+    #    for hours while raw CDP stayed instant — over a network boundary (Windows Chrome ↔
+    #    WSL2 over Tailscale). The engine used to declare "utility worlds, restart Chrome"
+    #    on the first timeout, which is wrong for a half-dead socket: a fresh connection
+    #    recovers it. connect() must try exactly ONE reconnect (drop the browser, reconnect)
+    #    before telling the caller to restart Chrome, and it must not loop.
+    src = (ROOT / "engine.js").read_text()
+    assert "async function connect(_reconnecting)" in src
+    assert "return connect(true);" in src, "no single reconnect attempt"
+    assert "!_reconnecting" in src, "reconnect not guarded against looping"
+    # the restart-Chrome message must be reachable only AFTER the reconnect failed
+    assert "even on a fresh connection" in src
+
+
+def test_500_errors_are_logged():
+    # 🔴 A stalled tab returned 500 to the caller but wrote nothing to the log, so there was
+    #    no trail. Anything >=500 must leave a line; 400s (caller typos) stay quiet.
+    src = (ROOT / "engine.js").read_text()
+    assert "[act-error]" in src
+    assert "status >= 500" in src
+
+
 def test_read_timeout_does_not_assert_the_page_changed():
     # 🔴 Reported 2026-09-04: read timed out on a small, static page (1ms of real DOM
     #    work), and the old message "the page kept changing while it was being read"

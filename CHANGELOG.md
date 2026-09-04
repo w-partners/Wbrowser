@@ -5,6 +5,28 @@ has the detail.
 
 ---
 
+## 0.12.3 — 2026-09-04
+
+### A half-dead browser connection now recovers itself, instead of demanding a restart
+
+Reported 2026-09-04: over a network boundary (Windows Chrome ↔ WSL2 over Tailscale) the
+websocket playwright holds to Chrome went silently one-way — `connectOverCDP` timed out for
+hours while raw CDP answered instantly. The engine read that timeout as utility-world
+buildup and said "restart Chrome, do not retry" — but for a half-dead socket a *fresh*
+connection recovers it, so people were restarting Chrome when a reconnect would have done.
+
+`connect()` now tells the two apart: on a `connectOverCDP` timeout where Chrome still
+answers raw CDP, it drops the stale browser handle and reconnects **once**. If that
+succeeds it was a half-dead socket (recovered, with a `[reconnect]` line in the log); if it
+times out again it really is utility-world buildup, and only then does it tell you to
+restart Chrome. The one retry costs one extra world — the price of telling the two apart.
+
+- **`act` errors (500s) are now logged.** A stalled tab returned 500 to the caller but
+  wrote nothing, so there was no trail to follow. Anything ≥500 (timeouts especially) now
+  leaves a `[act-error]` line; 400s (caller typos) stay quiet.
+
+Fixes only; no API change.
+
 ## 0.12.2 — 2026-09-04
 
 ### Tabs no longer pile up — agent tabs are reaped, and `newtab` stops orphaning a blank
