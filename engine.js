@@ -1153,7 +1153,20 @@ const server = http.createServer(async (req, res) => {
     // 🔵 400 and 500 tell the caller different things: one means "fix your request",
     //    the other means "something here broke". Sending 500 for both makes a typo
     //    look like an outage, and the caller goes looking at the engine.
-    res.statusCode = e.status || 500;
+    const status = e.status || 500;
+    // 🔴 Leave a trace in the log for anything that is not a plain bad-request (400).
+    //    Reported 2026-09-04: a tab stopped answering CDP entirely — every act on it
+    //    timed out — and the engine log did not gain a single line, so there was no
+    //    trail to follow. A failure that returns 500 to the caller but writes nothing is
+    //    the silent failure this project keeps guarding against. Timeouts especially:
+    //    they are the signature of a tab or connection that has died, and they must be
+    //    findable after the fact. 400s are the caller's typo and would only be noise.
+    if (status >= 500) {
+      const line = e.message.split('\n')[0];
+      const url = (req.url || '').split('?')[0];
+      console.error(`[act-error] ${new Date().toISOString()} ${status} ${url}: ${line}`);
+    }
+    res.statusCode = status;
     res.end(JSON.stringify({ error: e.message.split('\n')[0] }, null, 2));
   }
 });
