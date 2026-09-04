@@ -5,6 +5,30 @@ has the detail.
 
 ---
 
+## 0.13.7 — 2026-09-05
+
+### `--agent` is now a real flag; unknown flags fail instead of being swallowed
+
+`wb shot` was reported saving a *different* agent's tab — a logged-in page the caller
+never navigated to — to the caller's disk. The root cause: `wb go URL --agent <name>`
+passed a flag `wb` did not parse, so it fell through as a positional and did nothing.
+The session kept its auto-derived identity, and `go` and `shot` then resolved to
+different agents' tabs. A flag that looks like it works but is silently ignored is
+exactly the failure this tool guards against.
+
+- **`--agent <name>`** is now a real flag on every command — it forces which agent the
+  invocation (and its tab) runs as, overriding the working-directory / process-tree
+  derivation. Use it when the auto-derivation lands on the wrong name.
+- **Unknown flags now fail, named.** On a fixed-shape command (`go`, `read`, `shot`,
+  `click`, `press`, `errors`) any leftover `--flag` is rejected with a message instead of
+  being dropped. Free-text commands (`type`, `eval`, `console`, `network`) still allow a
+  literal `--` in their content — there it is text, not a flag.
+
+`wb shot` already captured *the running agent's* tab (never "whatever is on top"); this
+release makes sure you actually run as the agent you meant to.
+
+---
+
 ## 0.13.6 — 2026-09-05
 
 ### `wb status`'s Chrome check honours a timeout override, like the engine check

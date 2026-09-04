@@ -23,6 +23,24 @@ def need(rest, n, usage):
                          "selectors actually on the page)" % usage)
 
 
+# 🔴 Reject an unknown --flag instead of silently swallowing it. Reported 2026-09-05:
+#    `wb go URL --agent <name>` passed a flag that wb did not parse; it fell through as a
+#    positional and did nothing, so the command ran under the wrong identity and `shot`
+#    saved a different agent's tab. A flag that looks like it works but is ignored is the
+#    silent failure this tool exists to prevent — so any leftover token starting with `--`
+#    on a command that takes none is an error, named, not dropped.
+#    Only called for fixed-shape commands. Free-text commands (type/eval/console/network)
+#    can legitimately contain a `--` in their content, so they are never passed here.
+def no_unknown_flags(rest, op):
+    for a in rest:
+        if a.startswith("--"):
+            raise SystemExit(
+                "wb %s: unknown option %r.\n"
+                "       wb's own flags (--account, --tab, --agent, --browser) work on any\n"
+                "       command; --window/--fast are for go/type. Nothing else is a flag."
+                % (op, a))
+
+
 def build(argv):
     if not argv:
         raise SystemExit("mkcmd: no op given")
@@ -46,6 +64,7 @@ def build(argv):
             tab_name = args[i + 1]
             del args[i:i + 2]
         need(args, 1, "go <url>   [--tab <name>]   [--window]")
+        no_unknown_flags(args[1:], "go")   # after url; --window/--tab already consumed
         cmd = {"goto": args[0], "read": True}
         if new_window:
             cmd["newwindow"] = True
@@ -53,9 +72,11 @@ def build(argv):
             cmd["tab"] = tab_name
         return cmd
     if op == "read":
+        no_unknown_flags(rest, "read")
         return {"read": True}
     if op == "click":
         need(rest, 1, "click <selector>")
+        no_unknown_flags(rest[1:], "click")   # selector is rest[0]
         return {"click": rest[0], "wait": 1200, "read": True}
     if op == "type":
         # Preserve spaces in the text as-is — join all the remaining arguments.
@@ -76,8 +97,10 @@ def build(argv):
         return cmd
     if op == "press":
         need(rest, 1, "press <key>            e.g. Enter, Tab, Control+A")
+        no_unknown_flags(rest[1:], "press")   # key is rest[0]
         return {"press": rest[0], "wait": 1800, "read": True}
     if op == "shot":
+        no_unknown_flags(rest, "shot")
         return {"shot": True}
     if op == "console":
         # If a first argument is present, use it as a filter (regex)
@@ -86,6 +109,7 @@ def build(argv):
             c["filter"] = " ".join(rest)
         return c
     if op == "errors":
+        no_unknown_flags(rest, "errors")
         return {"errors": True, "limit": 60}
     if op == "network":
         c = {"network": True, "limit": 60}

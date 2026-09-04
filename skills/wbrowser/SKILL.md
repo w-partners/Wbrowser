@@ -200,6 +200,29 @@ wb go https://B --tab right --window   # now two windows, still one agent drivin
 costs you the connection. It is not a second browser: for a genuinely separate Chrome
 (its own profile and logins) use a numbered browser (below).
 
+### Which agent you run as (and why `wb shot` sometimes saved the wrong tab)
+
+Every command runs *as an agent*, and each agent gets its **own** tabs — `wb shot`
+captures the tab belonging to the agent the command runs as, never "whatever tab is on
+top". The name is derived automatically (from the working directory, then the process
+tree). If that derivation cannot find it, the name falls back to `agent@<you>` — and
+then a `go` and a later `shot` can land on *different* identities' tabs, so the
+screenshot is of a page you never navigated to (in the field: another agent's logged-in
+page saved to your disk).
+
+Force the identity when the auto-derivation is wrong:
+
+```bash
+wb go https://A --agent my-agent      # run this (and its tab) as 'my-agent'
+wb shot out.png --agent my-agent      # screenshot my-agent's tab, not a guess
+```
+
+🔴 `--agent` is a real flag (added because it used to be silently swallowed — it looked
+like it worked and did nothing). Unknown flags now **fail loudly** instead of being
+dropped: `wb shot out.png --typo` says so rather than screenshotting the wrong tab.
+`--account`, `--tab`, `--agent`, `--browser` work on any command; `--window`/`--fast`
+are for `go`/`type`.
+
 ## Several accounts
 
 ```bash

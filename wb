@@ -245,6 +245,7 @@ _engine_why() {
 #    every command, and hand it to mkcmd via WIN_TAB.
 ACCOUNT="${WIN_ACCOUNT:-}"
 TAB=""
+AGENT_OVERRIDE=""
 ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -252,12 +253,23 @@ while [ $# -gt 0 ]; do
     --account=*)  ACCOUNT="${1#--account=}"; shift ;;
     --tab)        TAB="${2:-}"; shift 2 || shift ;;
     --tab=*)      TAB="${1#--tab=}"; shift ;;
+    # 🔴 --agent forces which agent this invocation runs as, overriding the cwd/roster
+    #    guess. Reported 2026-09-05: someone passed `--agent <name>` and it was silently
+    #    swallowed as a positional (there was no such flag), so the session kept the
+    #    auto-derived identity — and `shot` then saved a *different* agent's tab (a
+    #    logged-in page) to the caller's disk. A flag that looks like it works but does
+    #    nothing is exactly the silent failure this tool guards against.
+    --agent)      AGENT_OVERRIDE="${2:-}"; shift 2 || shift ;;
+    --agent=*)    AGENT_OVERRIDE="${1#--agent=}"; shift ;;
     --browser|-b) shift 2 || shift ;;   # already read in the pre-scan above
     --browser=*)  shift ;;
     *) ARGS+=("$1"); shift ;;
   esac
 done
 set -- "${ARGS[@]+"${ARGS[@]}"}"
+# An explicit --agent wins over every derivation in _agent_name (which itself honours
+# WIN_AGENT first, so setting it here is enough).
+[ -n "$AGENT_OVERRIDE" ] && AGENT_NAME="$AGENT_OVERRIDE"
 
 cmd="${1:-status}"; shift || true
 

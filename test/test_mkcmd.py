@@ -165,6 +165,24 @@ class TestRejections(unittest.TestCase):
         with self.assertRaises(SystemExit):
             mkcmd.build(["frobnicate", "x"])
 
+    def test_unknown_flag_on_a_fixed_shape_command_is_an_error(self):
+        # 🔴 Reported 2026-09-05: an unknown --flag was swallowed as a positional and did
+        #    nothing, so the command ran under the wrong identity and shot saved another
+        #    agent's tab. A flag that looks like it works but is ignored must fail, named.
+        for argv in (["shot", "--bogus"], ["read", "--foo"],
+                     ["go", "http://x", "--agent", "n"], ["click", "#b", "--nope"],
+                     ["press", "Enter", "--x"], ["errors", "--y"]):
+            with self.assertRaises(SystemExit, msg=f"{argv} was accepted"):
+                mkcmd.build(argv)
+
+    def test_double_dash_is_still_allowed_inside_free_text(self):
+        # eval/type/console/network carry free text — a literal -- there is content, not a
+        # flag, and must not be rejected.
+        self.assertEqual(mkcmd.build(["eval", "a --b"])["eval"], "a --b")
+        self.assertEqual(mkcmd.build(["type", "#s", "hello --world"])["type"]["text"],
+                         "hello --world")
+        self.assertEqual(mkcmd.build(["console", "--tag"])["filter"], "--tag")
+
 
 if __name__ == "__main__":
     unittest.main()
@@ -173,6 +191,66 @@ if __name__ == "__main__":
 # 🔴 Typing a command bare to see what it wants is the most ordinary thing a new user
 #    does. Until 0.9.7 it was answered with `IndexError: list index out of range` and a
 #    Python traceback — measured on go, click, type and press.
+def test_wb_agent_flag_sets_identity_and_is_not_swallowed():
+    """🔴 Reported 2026-09-05: `wb go URL --agent <name>` was swallowed as a positional
+    (wb had no such flag), so the run kept its auto-derived identity and `shot` saved a
+    *different* agent's tab. wb must (a) parse --agent into the command's identity and
+    (b) strip it so mkcmd never sees it as an unknown flag. Proven end to end against a
+    stub engine that echoes the posted JSON back.
+    """
+    import subprocess, textwrap, socket, time, shutil, tempfile
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent
+    port = 7994
+    with socket.socket() as s:      # pick the fixed port only if free; skip if busy
+        if s.connect_ex(("127.0.0.1", port)) == 0:
+            return
+    body_file = Path(tempfile.gettempdir()) / "wb_posted_body.txt"
+    if body_file.exists():
+        body_file.unlink()
+    srv = root / "test" / "_echo_engine.js"
+    # The stub records the exact POST body to a file — fmt.py's rendering of the reply
+    # would otherwise hide what was actually sent, and it is the sent identity we test.
+    srv.write_text(textwrap.dedent("""
+        const http = require("http"), fs = require("fs");
+        http.createServer((q, r) => {
+          let b = ""; q.on("data", c => b += c);
+          q.on("end", () => {
+            try { fs.writeFileSync(process.env.WB_BODY_OUT, b); } catch (e) {}
+            r.writeHead(200, {"Content-Type": "application/json"});
+            r.end(JSON.stringify({ok: true}));
+          });
+        }).listen(%d, "127.0.0.1");
+    """ % port))
+    proc = subprocess.Popen([shutil.which("node"), str(srv)],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                            env={**os.environ, "WB_BODY_OUT": str(body_file)})
+    try:
+        for _ in range(40):
+            with socket.socket() as s:
+                if s.connect_ex(("127.0.0.1", port)) == 0:
+                    break
+            time.sleep(0.25)
+        env = {**os.environ, "WBROWSER_PORT": str(port)}
+        p = subprocess.run([str(root / "wb"), "go", "http://x", "--agent", "testagent"],
+                           cwd=root, env=env, capture_output=True, text=True, timeout=30)
+        out = p.stdout + p.stderr
+        assert "unknown option" not in out, f"--agent leaked to mkcmd: {out}"
+        for _ in range(20):                 # the POST is fire-and-forget; wait for the file
+            if body_file.exists():
+                break
+            time.sleep(0.1)
+        assert body_file.exists(), f"engine was never POSTed to (out={out!r})"
+        posted = body_file.read_text()
+        assert '"agent": "testagent"' in posted or '"agent":"testagent"' in posted, \
+            f"--agent did not set the posted identity: {posted}"
+    finally:
+        proc.terminate()
+        for f in (srv, body_file):
+            try: f.unlink()
+            except FileNotFoundError: pass
+
+
 def test_missing_arguments_print_usage_not_a_traceback():
     import subprocess, sys
     from pathlib import Path
