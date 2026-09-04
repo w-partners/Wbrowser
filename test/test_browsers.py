@@ -154,6 +154,23 @@ def test_reconnect_is_once_engine_wide_not_once_per_request():
     assert "!reconnecting" in src                 # gate excludes an in-flight reconnect
 
 
+def test_rawcdp_fallback_exists_and_is_gated_on_a_dead_playwright():
+    # 🔴 The raw-CDP fallback is the emergency lane for when playwright's connection is
+    #    half-dead (reconnectFailed). It must be reached BEFORE getTab (which would call
+    #    connect() and hang), and it must not try to serve newtab/newwindow (those need
+    #    playwright). Requested/approved 2026-09-04; zalman proved raw CDP stays live.
+    src = (ROOT / "engine.js").read_text()
+    assert "async function actViaRawCDP" in src
+    assert "if (reconnectFailed && !cmd.newtab && !cmd.newwindow)" in src
+    assert "return actViaRawCDP(cmd, tab);" in src
+    # the module the fallback drives Chrome with
+    raw = (ROOT / "rawcdp.js").read_text()
+    assert "Page.navigate" in raw and "Page.captureScreenshot" in raw
+    assert "Input.dispatchMouseEvent" in raw
+    # click must fail loudly on a zero-size / missing target, never click blindly
+    assert "no element matches" in raw and "zero-size box" in raw
+
+
 def test_500_errors_are_logged():
     # 🔴 A stalled tab returned 500 to the caller but wrote nothing to the log, so there was
     #    no trail. Anything >=500 must leave a line; 400s (caller typos) stay quiet.

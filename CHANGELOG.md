@@ -5,6 +5,28 @@ has the detail.
 
 ---
 
+## 0.13.0 — 2026-09-04
+
+### A raw-CDP fallback keeps you working when playwright's connection is down
+
+When playwright's `connectOverCDP` goes half-dead and its one reconnect cannot recover it
+(v0.12.3–v0.12.5 detect this but only a Chrome restart fixes it), the engine no longer
+leaves you stuck — it drives the page over a **fresh raw-CDP websocket** instead, which
+stays fully responsive when playwright's does not (measured 2026-09-04: `Page.navigate`,
+`Runtime.evaluate`, `Page.captureScreenshot`, `Input.dispatchMouseEvent` all worked while
+playwright timed out for hours). So `goto`, `eval`, `shot`, `press` and a basic `read`
+keep working, and a session does not have to stop for a Chrome restart.
+
+🔴 This is the **emergency lane, not a replacement for playwright.** It has no
+selector→coordinate resolution or actionability waiting, so `click` is best-effort
+(resolve the element's box, dispatch a real mouse click) and **fails loudly** if the box
+is zero-size or the selector matches nothing — it never clicks blindly. `newtab`/`newwindow`
+need playwright and still error. Responses on this lane carry `via: "rawcdp"` and a note to
+restart Chrome to restore full features.
+
+Verified locally (the raw-CDP module drives a live Chrome end to end); the "does it carry
+you through a real half-dead playwright" check is on the environment that reproduces that.
+
 ## 0.12.5 — 2026-09-04
 
 ### The reconnect now converges to exactly one, from both directions

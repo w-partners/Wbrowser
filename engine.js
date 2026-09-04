@@ -701,6 +701,46 @@ const BUILD = (() => {
   } catch { return 'unknown'; }
 })();
 
+// The raw-CDP fallback lane (see the note where it is invoked in act()). Opens a fresh
+// websocket to the page target for this tab, runs the command, and closes it. Deliberately
+// minimal — it exists so a half-dead playwright connection does not force a Chrome restart
+// mid-task. Anything it cannot do (a zero-size click target, newtab) fails loudly.
+// eslint-disable-next-line global-require
+const { RawCDP } = require('./rawcdp');
+async function actViaRawCDP(cmd, tab) {
+  const result = { tab, agent: cmd.agent, via: 'rawcdp' };
+  const done = [];
+  const raw = new RawCDP(CDP);
+  try {
+    // Match the page by the tab stamp the engine wrote into its title ("[b-id] agent ...").
+    await raw.attach(cmd.agent ? `${cmd.agent}` : null);
+    if (cmd.goto) { const u = await raw.goto(cmd.goto); done.push(`goto ${cmd.goto}`); result.url = u; }
+    if (cmd.click) { await raw.click(cmd.click); done.push(`click ${cmd.click}`); }
+    if (cmd.press) { await raw.press(cmd.press); done.push(`press ${cmd.press}`); }
+    if (cmd.eval) { result.result = await raw.evaluate(cmd.eval); done.push('eval'); }
+    if (cmd.read || cmd.goto || cmd.click) {
+      // A minimal read: title/url/text and a few links/buttons — not the full summarize
+      // (that walks the DOM via playwright helpers). Enough to see where you are.
+      result.page = await raw.evaluate(`(function(){
+        var txt=(document.body?document.body.innerText:'').slice(0,4000);
+        var links=[].slice.call(document.querySelectorAll('a[href]')).slice(0,20)
+          .map(function(a){return {text:(a.innerText||'').trim().slice(0,60),href:a.href}}).filter(function(x){return x.text});
+        var buttons=[].slice.call(document.querySelectorAll('button,[role=button],input[type=submit]')).slice(0,15)
+          .map(function(b){return (b.innerText||b.value||'').trim().slice(0,40)}).filter(Boolean);
+        return {url:location.href,title:document.title,text:txt,links:links,buttons:buttons};
+      })()`);
+    }
+    if (cmd.shot) { result.screenshot_b64 = await raw.screenshot(!!cmd.fullPage); done.push('shot'); }
+    result.done = done;
+    // 🔵 Tell the caller they are on the fallback lane, so a person knows why some things
+    //    (rich click, newtab) are limited and that a Chrome restart returns the full engine.
+    result.note = 'playwright connection is down; served over raw CDP. Restart Chrome to restore full features.';
+    return result;
+  } finally {
+    raw.close();
+  }
+}
+
 async function act(cmd) {
   const unknown = Object.keys(cmd || {}).filter((k) => !KNOWN_KEYS.has(k));
   if (unknown.length) {
@@ -712,6 +752,15 @@ async function act(cmd) {
     throw err;
   }
   const tab = cmd.tab || 'main';
+  // 🔴 Emergency lane. If playwright's connectOverCDP has gone half-dead (reconnectFailed,
+  //    set by connect() after its one reconnect could not recover), do NOT call getTab —
+  //    it would call connect() and hang again. Instead drive the page over a fresh raw-CDP
+  //    websocket, which stays responsive when playwright's does not (measured 2026-09-04,
+  //    zalman). This is the thin fallback: goto/eval/shot/press/read map 1:1; click is
+  //    best-effort by coordinate. A newtab/newwindow needs playwright, so those still error.
+  if (reconnectFailed && !cmd.newtab && !cmd.newwindow) {
+    return actViaRawCDP(cmd, tab);
+  }
   // If account is given explicitly use it, otherwise look the URL up in the mapping.
   const explicit = !!cmd.account;
   const acct = cmd.account || (cmd.goto ? accountForUrl(cmd.goto) : null);

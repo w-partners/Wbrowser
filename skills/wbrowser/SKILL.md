@@ -121,6 +121,13 @@ resolves to Windows itself and can hang loading forever; while that tab is open,
 calls slow down. Close the tab, or use the machine's real/Tailscale address instead of
 loopback.
 
+🔵 If playwright's connection goes half-dead (it times out while Chrome still answers raw
+CDP), the engine falls back to a **raw-CDP lane** so you keep working — `go`/`read`/`eval`/
+`shot`/`press` still run (responses are marked `via: "rawcdp"`). It is a reduced lane:
+`click` is best-effort by coordinate and fails loudly rather than clicking nothing, and
+opening tabs/windows needs a Chrome restart. Restart Chrome (`wb up`) to restore the full
+engine when you can.
+
 ## Tabs
 
 ```bash
