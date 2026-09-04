@@ -108,7 +108,18 @@ async function connect(_reconnecting) {
         reconnecting = true;
         console.error(`[reconnect] ${new Date().toISOString()} connectOverCDP timed out but raw CDP is up — dropping the browser handle and reconnecting once`);
         try {
-          try { if (browser) await browser.close(); } catch { /* going away */ }
+          // 🔴 Closing a half-dead browser can hang forever waiting for a CDP reply that
+          //    never comes (puppeteer #5331), and worse, playwright may reject the close in
+          //    the BACKGROUND after we have moved on — an unhandled rejection that took the
+          //    whole engine down mid-request (reported 2026-09-04: empty body, port dead,
+          //    only [act-error] restart-Chrome in the log, no rawcdp error → it died before
+          //    the fallback). So: attach a catch to the close promise so a late rejection is
+          //    swallowed, and do not await it past a short timeout.
+          if (browser) {
+            const b = browser;
+            const closed = b.close().catch(() => {});   // catch handles a late background reject
+            await Promise.race([closed, new Promise((r) => { setTimeout(r, 2000); })]);
+          }
           browser = null; ctx = null;
           return await connect(true);
         } finally {

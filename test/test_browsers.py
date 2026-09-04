@@ -180,6 +180,30 @@ def test_rawcdp_attach_probes_for_a_live_tab():
     assert "no live page target" in raw
     assert "Runtime.evaluate" in raw and "1500" in raw   # short liveness probe
 
+def test_fallback_click_handles_playwright_selectors_and_fails_loudly():
+    # 🔴 Reported 2026-09-04 (zalman): fallback click on `button:has-text("...")` / `text=...`
+    #    threw a bare "Uncaught" (a querySelector SyntaxError) before any click logic — the
+    #    selector was playwright syntax raw CDP does not understand. The resolver now handles
+    #    text= / :has-text() by text search, and an unsupported selector fails with a clear
+    #    message instead of leaking a SyntaxError.
+    raw = (ROOT / "rawcdp.js").read_text()
+    assert "text=" in raw and "has-text" in raw
+    assert "not supported in the raw-CDP fallback" in raw
+
+
+def test_rawcdp_socket_error_after_open_does_not_leak():
+    # 🔴 An 'error' AFTER the socket opened had no handler — on Node's WebSocket that is an
+    #    unhandled rejection that took the engine down on the NEXT request, with no log line
+    #    (it died outside every catch). A persistent error listener now fails pending sends
+    #    instead of throwing loose. Reported 2026-09-04 (zalman): the crash left only a
+    #    [reconnect] line and killed the port.
+    raw = (ROOT / "rawcdp.js").read_text()
+    assert "websocket error after open" in raw
+    # and the reconnect close swallows a late background rejection with a bounded wait
+    src = (ROOT / "engine.js").read_text()
+    assert "b.close().catch(() => {})" in src
+
+
 def test_fallback_failure_does_not_kill_the_engine():
     # 🔴 Reported 2026-09-04: a few requests into the fallback the engine crashed — the
     #    caller got an empty body (not even a 500) and the port went dead. A half-closed

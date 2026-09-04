@@ -70,8 +70,22 @@ class RawCDP {
       // eslint-disable-next-line no-undef
       this.ws = new WebSocket(wsUrl);
       const to = setTimeout(() => reject(new Error('rawcdp: websocket open timeout')), 5000);
-      this.ws.addEventListener('open', () => { clearTimeout(to); resolve(); });
-      this.ws.addEventListener('error', () => { clearTimeout(to); reject(new Error('rawcdp: websocket error')); });
+      let opened = false;
+      // 🔴 A PERSISTENT error listener. Without one, an 'error' AFTER the socket opened has
+      //    no handler — on Node's built-in WebSocket that surfaces as an unhandled rejection
+      //    and takes the whole engine down. Reported 2026-09-04: the engine died on the
+      //    request after the one that opened the socket, with no log line (it died outside
+      //    every catch). This listener stays for the socket's life: before open it rejects
+      //    the connect; after open it fails any pending sends instead of throwing loose.
+      this.ws.addEventListener('error', () => {
+        clearTimeout(to);
+        if (!opened) { reject(new Error('rawcdp: websocket error')); return; }
+        for (const { reject: rej } of this.pending.values()) {
+          try { rej(new Error('rawcdp: websocket error after open')); } catch { /* noop */ }
+        }
+        this.pending.clear();
+      });
+      this.ws.addEventListener('open', () => { clearTimeout(to); opened = true; resolve(); });
       this.ws.addEventListener('message', (ev) => {
         let o;
         try { o = JSON.parse(ev.data); } catch { return; }
@@ -129,17 +143,39 @@ class RawCDP {
     await this.send('Input.dispatchKeyEvent', { type: 'keyUp', key });
   }
 
-  // Best-effort click: resolve the selector to a center point, then dispatch a real mouse
-  // click there. 🔴 If the rect is 0×0 or off-screen we do NOT click blindly — we throw,
-  // so the caller learns the fallback could not place the click rather than "succeeding"
-  // on nothing.
+  // Best-effort click. 🔴 The selector may be playwright syntax (text=, :has-text()) that
+  // raw CDP's querySelector does not understand — measured 2026-09-04 (zalman): both a
+  // text= selector and a plain one threw "Uncaught" (a querySelector SyntaxError) before
+  // any of the click logic ran. So we resolve the element in the page with a small helper
+  // that handles the common playwright forms, then dispatch a real mouse click at its
+  // centre. If the element cannot be found, or its box is zero-size, we throw a clear
+  // message rather than clicking nothing or leaking a SyntaxError.
   async click(selector) {
-    const box = await this.evaluate(`(function(){var e=document.querySelector(${JSON.stringify(selector)});if(!e)return null;var r=e.getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2,w:r.width,h:r.height}})()`);
-    if (!box) throw new Error(`rawcdp click: no element matches ${selector}`);
-    if (box.w < 1 || box.h < 1) throw new Error(`rawcdp click: ${selector} has a zero-size box — playwright is needed to click it; restart Chrome`);
-    await this.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: box.x, y: box.y });
-    await this.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: box.x, y: box.y, button: 'left', clickCount: 1 });
-    await this.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: box.x, y: box.y, button: 'left', clickCount: 1 });
+    // The resolver runs in the page: it understands `text=X` / `:has-text("X")` /
+    // `role=button[name="X"]`-ish forms by text search, and otherwise falls back to
+    // querySelector. It returns a labelled result so the engine can explain a miss.
+    const resolver = `(function(sel){
+      function box(e){ if(!e) return null; var r=e.getBoundingClientRect(); return {x:r.left+r.width/2, y:r.top+r.height/2, w:r.width, h:r.height}; }
+      function byText(t){
+        t=(t||'').trim(); if(!t) return null;
+        var els=document.querySelectorAll('button,a,[role=button],input[type=submit],[role=link],div,span');
+        for(var i=0;i<els.length;i++){ var s=(els[i].innerText||els[i].value||'').trim(); if(s===t||s.indexOf(t)>=0) return els[i]; }
+        return null;
+      }
+      var m;
+      if((m=sel.match(/^text=(.+)$/))) { var e=byText(m[1].replace(/^["']|["']$/g,'')); return e?{ok:1,box:box(e)}:{ok:0,why:'no element with text '+m[1]}; }
+      if((m=sel.match(/:has-text\\((["'])(.+?)\\1\\)/))) { var e2=byText(m[2]); return e2?{ok:1,box:box(e2)}:{ok:0,why:'no element has-text '+m[2]}; }
+      try { var e3=document.querySelector(sel); return e3?{ok:1,box:box(e3)}:{ok:0,why:'no element matches '+sel}; }
+      catch(err){ return {ok:0,why:'selector not supported in the raw-CDP fallback: '+sel+' (restart Chrome for the full engine)'}; }
+    })(${JSON.stringify(selector)})`;
+    const res = await this.evaluate(resolver);
+    if (!res || !res.ok) throw new Error(`rawcdp click: ${(res && res.why) || 'could not resolve ' + selector}`);
+    const b = res.box;
+    if (!b) throw new Error(`rawcdp click: resolved ${selector} but got no box`);
+    if (b.w < 1 || b.h < 1) throw new Error(`rawcdp click: ${selector} has a zero-size box — playwright is needed to click it; restart Chrome`);
+    await this.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: b.x, y: b.y });
+    await this.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: b.x, y: b.y, button: 'left', clickCount: 1 });
+    await this.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: b.x, y: b.y, button: 'left', clickCount: 1 });
   }
 
   close() {

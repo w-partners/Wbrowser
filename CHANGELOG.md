@@ -5,6 +5,30 @@ has the detail.
 
 ---
 
+## 0.13.2 — 2026-09-04
+
+### Fallback click understands playwright selectors; two more unhandled-rejection paths closed
+
+Verifying v0.13.1 against a real half-dead playwright (zalman): `①②③⑤` worked, `④ click`
+did not, and the engine still crashed intermittently.
+
+- **`click` in the fallback threw a bare "Uncaught".** A `button:has-text("…")` / `text=…`
+  selector is playwright syntax that raw CDP's `querySelector` cannot parse, so it raised a
+  SyntaxError before any click logic ran. The fallback now resolves `text=` and
+  `:has-text()` by text search, and an unsupported selector fails with a clear "not
+  supported in the raw-CDP fallback — restart Chrome" message rather than a bare Uncaught.
+- **Two more places where a rejection could escape every `catch` and kill the engine.**
+  Reported: the engine died on the request *after* the one that opened a raw-CDP socket,
+  leaving only a `[reconnect]` line (it died outside all handlers). Now: `close()` and a
+  persistent socket-`error` listener fail pending sends instead of throwing loose, and the
+  reconnect's `browser.close()` swallows a late background rejection under a bounded wait.
+
+🔵 This closes the two *known* unhandled paths; the crash is intermittent and if a third
+path exists, an engine-stderr stack trace (zalman is capturing) will pin it. "Fixed the
+paths we can see," not "the crash is gone."
+
+Fix only; no API change.
+
 ## 0.13.1 — 2026-09-04
 
 ### The raw-CDP fallback now picks a live tab, and a fallback failure can't crash the engine
