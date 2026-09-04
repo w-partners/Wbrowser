@@ -215,3 +215,36 @@ first tab of browser 2. That is how you point at one tab among several browsers.
 number is fixed once assigned, so `[2-1]` today is `[2-1]` tomorrow.
 🔴 Each named browser starts empty. A person signs into it; agents never handle
 passwords.
+
+## Driving CDP by hand — field notes
+
+If you skip `wb` and speak Chrome DevTools Protocol directly (comparing two tabs,
+scripting a sweep), these came out of real use:
+
+- **Navigate with `Page.navigate`, not `location.href` in `Runtime.evaluate`.**
+  Changing `location.href` inside an evaluate often left the *next* CDP call hanging —
+  the navigation tears down the execution context the evaluate is waiting on, and the
+  reply is lost. `Page.navigate({url})` returns straight away. (Measured: five-plus
+  timeouts with `location.href`, none after switching.)
+
+- **Move tabs one at a time, not `Promise.all`.** Navigating two tabs at once timed
+  out almost every time; sequential was stable.
+
+- **Do not decide "these two screens match" from `innerText`.** Text comparison called
+  a screen identical while it was missing three icons (not text), had an empty grey
+  card (not text), and had a title with another string printed over it (both unreadable).
+  Take `Page.captureScreenshot` and *look* — text and geometry are supporting evidence,
+  not the verdict. `wb read` already pairs with `wb shot` for exactly this; use both.
+
+- **If you check for overlapping elements, exclude nesting** — a parent containing a
+  child is not an overlap:
+
+  ```js
+  if (a.contains(b) || b.contains(a)) continue;
+  const ox = Math.min(A.right, B.right) - Math.max(A.left, B.left);
+  const oy = Math.min(A.bottom, B.bottom) - Math.max(A.top, B.top);
+  if (ox > 3 && oy > 3) { /* real overlap */ }
+  ```
+
+- **The CDP port is not fixed — scan for it, never hardcode.** A number baked into a
+  config goes stale the next launch.
