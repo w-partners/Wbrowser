@@ -120,6 +120,30 @@ Chrome restarts) and only a Chrome restart clears those. Do not retry either way
 attempt adds another world. This piles up fastest from repeated reconnects (many restart
 cycles, or `kill -9` on the engine), not from normal use.
 
+**Which layer is it?** These look alike from the outside but want different fixes. You do
+not need to hand-write raw CDP — `wb status` already probes CDP and the engine, so read it
+together with a `wb read`: `❌ Chrome`/`❌ Engine` → layer 1; `✅ Chrome` but you cannot
+operate → not layer 2; everything green in `wb status` but `wb read` times out → layer 3.
+The order and the layers (method from a peer's field notes, 2026-09-04):
+
+1. **Is anything listening?** `curl` to the engine or CDP port refused instantly (HTTP 000,
+   a few ms) means the port is not held — Chrome or the engine is gone, not stuck. Fast and
+   unambiguous. 🔴 Judge engine liveness by `/health` (the port), **not** `pgrep engine.js`:
+   the process can be alive while holding no port (measured — a live PID answering nothing).
+   🔴 **HTTP 000 is two different things**: an *instant* refusal (0–6ms — no socket, waiting
+   won't change it) vs a *timeout* (a slow engine cut off — raise `WB_HEALTH_TIMEOUT` and
+   measure once more before calling it dead; a 10.9s /health has been misread as dead).
+2. **Does raw CDP answer?** If `/json/version` does not respond, the fault is in Chrome
+   (utility-world buildup) — only a Chrome restart clears it.
+3. **Does raw CDP answer but playwright does not?** Then it is the *engine's* connection —
+   an engine restart (`wb down && wb up`) can clear it without touching Chrome. This is also
+   the case the raw-CDP fallback covers: if the fallback works, you are in this layer.
+   🔴 **`/health` returning `ok` does NOT rule this out.** `/health` answers "is the engine
+   process alive", by design — it does not check that playwright can attach. In a half-dead
+   state the engine is fine and says so while its playwright client is dead (see the
+   "was healthy and said so; it was holding a dead tab" note in engine.js). So do not close
+   on a green `/health` — layer 3 sits behind it.
+
 🔵 On WSL with Chrome running on the Windows side, a tab pointed at `127.0.0.1:<port>`
 resolves to Windows itself and can hang loading forever; while that tab is open, engine
 calls slow down. Close the tab, or use the machine's real/Tailscale address instead of
