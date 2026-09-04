@@ -5,6 +5,29 @@ has the detail.
 
 ---
 
+## 0.11.3 — 2026-09-04
+
+### Field notes for driving CDP by hand (SKILL)
+
+From an agent comparing two sites side by side over raw CDP — measured, not guessed:
+
+- **Navigate with `Page.navigate`, not `location.href` inside `Runtime.evaluate`** —
+  the latter often left the next CDP call hanging (the navigation tears down the
+  execution context the evaluate is waiting on). Moving two tabs at once may be a
+  second face of the same lost-reply.
+- **`innerText` is not enough to call two screens equal** — a screenshot caught empty
+  grey cards, missing icons, a 263px blank gap, and audio that was raw PCM the browser
+  could not open. Text and geometry are supporting evidence, not the verdict.
+- **A file existing is not the file working** — verify it actually *loads*
+  (`loadedmetadata` for audio/video, `img.decode()` / `new Image().onload` for images);
+  a timeout is a failure, not a pass.
+- **Before blaming your fix, check the server isn't serving the old file** — log the
+  received byte-count next to the on-disk one.
+- **Overlap detection is a hint, not a verdict** — pages stack elements on purpose;
+  exclude parent/child nesting and let the caller judge.
+
+Docs-only; no engine or CLI behaviour changed.
+
 ## 0.11.2 — 2026-09-02
 
 ### Tabs no longer label themselves "agent@you" when the session runs wb from elsewhere

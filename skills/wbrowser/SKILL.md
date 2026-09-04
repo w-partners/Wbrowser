@@ -227,23 +227,58 @@ scripting a sweep), these came out of real use:
   reply is lost. `Page.navigate({url})` returns straight away. (Measured: five-plus
   timeouts with `location.href`, none after switching.)
 
-- **Move tabs one at a time, not `Promise.all`.** Navigating two tabs at once timed
-  out almost every time; sequential was stable.
+- **Move tabs one at a time.** Navigating two tabs at once (via `location.href` in
+  evaluate) timed out almost every time; sequential was stable. This may just be a
+  second face of the point above — the same lost-reply, seen twice — so if you already
+  navigate with `Page.navigate`, one-at-a-time may not be needed. Not independently
+  confirmed.
 
 - **Do not decide "these two screens match" from `innerText`.** Text comparison called
   a screen identical while it was missing three icons (not text), had an empty grey
   card (not text), and had a title with another string printed over it (both unreadable).
   Take `Page.captureScreenshot` and *look* — text and geometry are supporting evidence,
   not the verdict. `wb read` already pairs with `wb shot` for exactly this; use both.
+  Real cases only the screenshot caught: empty grey cards, whole icons missing, a
+  263px blank gap where a preview should be, and an audio result that was raw PCM the
+  browser could not open — reported "success" from the 128KB file size alone.
 
-- **If you check for overlapping elements, exclude nesting** — a parent containing a
-  child is not an overlap:
+- **A file existing is not the file working.** Bytes on disk (a 128KB download, a
+  saved screenshot) do not mean the thing opened, rendered, or decoded. Verify the
+  result, not the size — check that it actually *loads*:
 
   ```js
-  if (a.contains(b) || b.contains(a)) continue;
+  // audio: only loadedmetadata counts as success
+  const ok = await new Promise(r => {
+    const el = new Audio(url);
+    el.addEventListener('loadedmetadata', () => r({ok:true, dur:el.duration}));
+    el.addEventListener('error',          () => r({ok:false, code:el.error?.code}));
+    // a timeout is a FAILURE, not a pass — a broken file can hang with no error
+    // event at all (a stale server did exactly this). ~6s is a local guess.
+    setTimeout(() => r({ok:false, code:'timeout'}), 6000);
+  });
+  // video: same loadedmetadata shape.
+  // image: await img.decode(), OR new Image().onload — the latter also gives
+  //        naturalWidth/Height, so you get "loaded + dimensions" in one shot.
+  ```
+
+- **Before blaming your fix, check the server isn't holding the old file.** A corrected
+  file still failed to load because the server was serving a pre-restart index — the
+  browser got the *old* bytes (131086B) while disk had the fixed ones (131130B). Log
+  the received byte-count next to the on-disk byte-count; if they differ, the server is
+  stale, not your fix. (Same shape as a `kill -9`'d engine holding a stale browser
+  state — always ask "is the server holding the current thing?" before you dig.)
+
+- **Listing overlapping elements is a hint, not a verdict.** If you compute overlaps,
+  the caller must judge them — a page often *stacks elements on purpose* (a background
+  card under content), and that is indistinguishable from a real defect (a caption
+  printed over a title) by geometry alone. Excluding parent/child nesting is still
+  required, or every container reads as an overlap and buries the real ones:
+
+  ```js
+  if (a.contains(b) || b.contains(a)) continue;   // nesting is not overlap
   const ox = Math.min(A.right, B.right) - Math.max(A.left, B.left);
   const oy = Math.min(A.bottom, B.bottom) - Math.max(A.top, B.top);
-  if (ox > 3 && oy > 3) { /* real overlap */ }
+  if (ox > 3 && oy > 3) { /* candidate — a human/model still decides */ }
   ```
 
 - **The CDP port is not fixed — scan for it, never hardcode.** A number baked into a
