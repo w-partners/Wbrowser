@@ -84,6 +84,41 @@ class TestOtherOps(unittest.TestCase):
         self.assertEqual(mkcmd.build(["shot"]), {"shot": True})
 
 
+class TestGoWindowAndTab(unittest.TestCase):
+    # 🔵 --window opens the page in its own OS window (same Chrome, same control) so one
+    #    agent can watch two pages side by side; --tab names the tab so later commands
+    #    reach the same one. Requested 2026-09-04.
+    def test_plain_go_opens_no_new_window(self):
+        # The default must stay a tab in the current window — a stray newwindow would
+        # spawn a window on every navigation.
+        cmd = mkcmd.build(["go", "https://a.com"])
+        self.assertNotIn("newwindow", cmd)
+        self.assertNotIn("tab", cmd)
+
+    def test_window_flag_sets_newwindow_and_keeps_the_url(self):
+        cmd = mkcmd.build(["go", "https://a.com", "--window"])
+        self.assertTrue(cmd["newwindow"])
+        self.assertEqual(cmd["goto"], "https://a.com")
+        # the flag must not become the url or a second positional
+        self.assertNotIn("--window", cmd.values())
+
+    def test_tab_names_the_tab_and_is_not_the_url(self):
+        cmd = mkcmd.build(["go", "https://a.com", "--tab", "right"])
+        self.assertEqual(cmd["tab"], "right")
+        self.assertEqual(cmd["goto"], "https://a.com")
+
+    def test_window_and_tab_combine(self):
+        cmd = mkcmd.build(["go", "https://a.com", "--tab", "right", "--window"])
+        self.assertTrue(cmd["newwindow"])
+        self.assertEqual(cmd["tab"], "right")
+        self.assertEqual(cmd["goto"], "https://a.com")
+
+    def test_tab_without_a_name_is_an_error_not_a_swallowed_url(self):
+        # `--tab` with nothing after it must not eat the url or pass silently.
+        with self.assertRaises(SystemExit):
+            mkcmd.build(["go", "https://a.com", "--tab"])
+
+
 class TestRejections(unittest.TestCase):
     def test_no_op_is_an_error(self):
         with self.assertRaises(SystemExit):

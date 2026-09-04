@@ -5,6 +5,28 @@ has the detail.
 
 ---
 
+## 0.12.0 — 2026-09-04
+
+### One agent, two tabs — now splittable into side-by-side windows (`--window`)
+
+You could already drive several named tabs from one connection. Now `wb go <url>
+--window` opens the page in its own OS window instead of a tab in the current one — same
+Chrome, same CDP connection, so **control is unchanged**; only the layout differs, so one
+agent can watch two pages at once.
+
+```bash
+wb go https://A --tab left  --window
+wb go https://B --tab right --window   # two windows, still one agent driving both
+```
+
+`newtab` opens a tab in the current window (`newPage()`); the new `newwindow` splits it
+into its own window via CDP `Target.createTarget({newWindow:true})`, which is the only
+way to do it — Playwright's `newPage()` cannot. It is not a second browser: for a
+genuinely separate Chrome (its own profile and logins) use a numbered browser (`-b`).
+
+Verified end-to-end against a live browser: `newwindow` took the window count from 1 to
+2 and commands still reached the new window's tab (labelled `[3-29] …`).
+
 ## 0.11.3 — 2026-09-04
 
 ### Field notes for driving CDP by hand (SKILL)

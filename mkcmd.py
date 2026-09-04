@@ -29,8 +29,29 @@ def build(argv):
     op, rest = argv[0], argv[1:]
 
     if op == "go":
-        need(rest, 1, "go <url>")
-        return {"goto": rest[0], "read": True}
+        # 🔵 --window opens the page in its own OS window instead of a tab in the
+        #    current one — same Chrome, same control, just split off so one agent can
+        #    watch two pages side by side. --tab <name> names the tab so later commands
+        #    (`wb --tab right read`) reach the same one.
+        args = list(rest)
+        new_window = False
+        tab_name = None
+        if "--window" in args:
+            args.remove("--window")
+            new_window = True
+        if "--tab" in args:
+            i = args.index("--tab")
+            if i + 1 >= len(args):
+                raise SystemExit("Usage: wb go <url> --tab <name> [--window]")
+            tab_name = args[i + 1]
+            del args[i:i + 2]
+        need(args, 1, "go <url>   [--tab <name>]   [--window]")
+        cmd = {"goto": args[0], "read": True}
+        if new_window:
+            cmd["newwindow"] = True
+        if tab_name:
+            cmd["tab"] = tab_name
+        return cmd
     if op == "read":
         return {"read": True}
     if op == "click":

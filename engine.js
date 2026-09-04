@@ -579,7 +579,7 @@ async function requireMatch(page, selector, verb) {
 const KNOWN_KEYS = new Set([
   'goto', 'click', 'type', 'press', 'read', 'shot', 'eval', 'wait',
   'console', 'errors', 'network', 'tab', 'account', 'agent', 'selector',
-  'newtab', 'fullPage', 'limit', 'filter',
+  'newtab', 'newwindow', 'fullPage', 'limit', 'filter',
 ]);
 
 // 🔴 What is actually running here. Reported 2026-08-31: a fix was released, pulled,
@@ -625,6 +625,25 @@ async function act(cmd) {
     // Same key shape as getTab — see the note there on why the account is not part of it.
     tabs.set(`${cmd.agent || ''}::${tab}`, page);
     done.push('newtab');
+  }
+  if (cmd.newwindow) {
+    // Like newtab, but the tab opens in its own OS window — same Chrome, same CDP, so
+    // control is unchanged; only the layout differs, letting one agent watch two tabs
+    // side by side. newPage() always makes a tab in the current window; only CDP's
+    // Target.createTarget({newWindow:true}) splits it off. We wait on the context's
+    // 'page' event to adopt the playwright Page it produces, so the rest of the tab
+    // machinery is unchanged.
+    const c = await pickContext(acct, explicit);
+    const anchor = c.pages().find((p) => !p.isClosed()) || await c.newPage();
+    const cdp = await c.newCDPSession(anchor);
+    const appeared = c.waitForEvent('page', { timeout: 5000 }).catch(() => null);
+    await cdp.send('Target.createTarget', { url: 'about:blank', newWindow: true });
+    await cdp.detach().catch(() => {});
+    const opened = await appeared;
+    if (!opened) throw new Error('newwindow: opened a window but could not attach to it');
+    page = opened;
+    tabs.set(`${cmd.agent || ''}::${tab}`, page);
+    done.push('newwindow');
   }
   if (cmd.goto) {
     // 🔴 A goto timeout does not mean the page failed to load. Heavy SPAs keep requests

@@ -80,8 +80,17 @@ def test_newtab_is_a_known_key():
     #    came back 400 — measured 2026-09-01.
     src = (ROOT / "engine.js").read_text()
     keys = _re.search(r"KNOWN_KEYS = new Set\(\[(.*?)\]\)", src, _re.S).group(1)
-    for k in ("newtab", "fullPage", "limit", "filter"):
+    for k in ("newtab", "newwindow", "fullPage", "limit", "filter"):
         assert f"'{k}'" in keys, f"{k} is handled but not in KNOWN_KEYS"
+
+
+def test_engine_opens_new_window_via_cdp_not_newpage():
+    # 🔵 --window must split the tab into its own OS window. newPage() always makes a
+    #    tab in the current window; only CDP's Target.createTarget({newWindow:true})
+    #    opens a window. Requested 2026-09-04. Same Chrome/CDP, so control is unchanged.
+    src = (ROOT / "engine.js").read_text()
+    assert "cmd.newwindow" in src
+    assert "Target.createTarget" in src and "newWindow: true" in src
 
 
 def test_agent_name_walks_the_process_tree_not_just_the_parent():

@@ -122,6 +122,29 @@ carries a translucent "in control" banner, so the user can always see it is you.
 🔴 The flip side, and be honest about it if asked: **moving the mouse does not pause
 you.** You are not yielding the tab, you simply never shared one.
 
+### One agent, two tabs — as tabs or as side-by-side windows
+
+Name your tabs and drive both from the one connection:
+
+```bash
+wb go https://A --tab left            # a tab named 'left'
+wb go https://B --tab right           # another named 'right'
+wb --tab left read                    # later commands reach the same tab by name
+```
+
+Add `--window` to split a tab off into its **own OS window** — same Chrome, same
+control (it is one CDP connection either way), just laid out separately so you can
+watch two pages at once:
+
+```bash
+wb go https://A --tab left  --window
+wb go https://B --tab right --window   # now two windows, still one agent driving both
+```
+
+🔵 `--window` changes the *layout*, not the control — splitting into windows never
+costs you the connection. It is not a second browser: for a genuinely separate Chrome
+(its own profile and logins) use a numbered browser (below).
+
 ## Several accounts
 
 ```bash
