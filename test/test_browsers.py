@@ -127,7 +127,7 @@ def test_connect_reconnects_once_before_blaming_utility_worlds():
     #    before telling the caller to restart Chrome, and it must not loop.
     src = (ROOT / "engine.js").read_text()
     assert "async function connect(_reconnecting)" in src
-    assert "return connect(true);" in src, "no single reconnect attempt"
+    assert "await connect(true);" in src, "no single reconnect attempt"
     assert "!_reconnecting" in src, "reconnect not guarded against looping"
     # the restart-Chrome message must be reachable only AFTER the reconnect failed
     assert "even on a fresh connection" in src
@@ -145,6 +145,13 @@ def test_reconnect_is_once_engine_wide_not_once_per_request():
     # failure sets it, success clears it
     assert "reconnectFailed = true;" in src
     assert "reconnectFailed = false; return;" in src
+    # 🔴 and a second guard against CONCURRENT reconnects: the failure flag is set only
+    #    AFTER the attempt, so back-to-back requests could each start their own before any
+    #    failed. Measured 2026-09-04 (zalman): 6 reconnects in 0.96s, some 2ms apart — a
+    #    race. An in-progress flag set at the START closes it.
+    assert "let reconnecting = false;" in src
+    assert "reconnecting = true;" in src          # set before the await
+    assert "!reconnecting" in src                 # gate excludes an in-flight reconnect
 
 
 def test_500_errors_are_logged():

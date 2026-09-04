@@ -1,6 +1,6 @@
 {
   "name": "wbrowser",
-  "version": "0.12.4",
+  "version": "0.12.5",
   "mcpName": "io.github.w-partners/wbrowser",
   "description": "Drive a real Chrome you signed into yourself, from the terminal or any MCP client",
   "type": "commonjs",

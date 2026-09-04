@@ -54,6 +54,14 @@ const tabs = new Map();          // name -> page
 //    fails, every later request goes straight to the restart-Chrome message until a
 //    successful connect clears it.
 let reconnectFailed = false;
+// 🔴 Also guard against CONCURRENT reconnects. Requests arrive back-to-back, and the
+//    failure flag is only set AFTER the reconnect returns — so several requests can pass
+//    the gate and each start their own reconnect before any of them fails. Measured
+//    2026-09-04 (zalman): [reconnect] fired 6 times where it should have been 1, from
+//    exactly this race. Setting a "reconnect in progress" flag at the START closes it: the
+//    requests that pile in during the attempt see it and go straight to the wait/message
+//    instead of launching their own.
+let reconnecting = false;
 
 // The CDP connection can drop (Chrome quits / restarts). Check on every request
 // whether it is still alive and reattach if it died — so we never fail silently
@@ -81,7 +89,7 @@ async function connect(_reconnecting) {
         const r = await fetch(`${CDP}/json/version`, { signal: AbortSignal.timeout(2000) });
         reachable = r.ok;
       } catch { /* leave it false */ }
-      if (reachable && !_reconnecting && !reconnectFailed) {
+      if (reachable && !_reconnecting && !reconnectFailed && !reconnecting) {
         // 🔵 Two different faults look identical here — a connectOverCDP timeout while
         //    Chrome answers raw CDP — and they want opposite responses:
         //      • utility-world buildup: only a Chrome restart clears it; reconnecting
@@ -95,10 +103,32 @@ async function connect(_reconnecting) {
         //    that succeeds it was half-dead (recovered); if it times out again it is world
         //    buildup, and only then do we tell the caller to restart Chrome. The one retry
         //    costs one extra world, which is the price of telling the two apart.
+        // 🔴 Mark "in progress" BEFORE the await, so concurrent requests that arrive while
+        //    this reconnect is running see it and do not each launch their own.
+        reconnecting = true;
         console.error(`[reconnect] ${new Date().toISOString()} connectOverCDP timed out but raw CDP is up — dropping the browser handle and reconnecting once`);
-        try { if (browser) await browser.close(); } catch { /* going away */ }
-        browser = null; ctx = null;
-        return connect(true);
+        try {
+          try { if (browser) await browser.close(); } catch { /* going away */ }
+          browser = null; ctx = null;
+          return await connect(true);
+        } finally {
+          reconnecting = false;   // clear whether the reconnect succeeded or threw
+        }
+      }
+      // 🔴 The reconnect ATTEMPT itself (_reconnecting) must fall through to the block
+      //    below so it sets reconnectFailed and throws the restart message — it must NOT be
+      //    treated as "a reconnect is in flight, retry". Only OTHER requests that arrived
+      //    while a reconnect is running get the transient 503. Without excluding
+      //    _reconnecting here, the retry's own failure returned 503 and never set the flag,
+      //    so every later request reconnected again (measured: [reconnect] every ~12s).
+      if (reachable && reconnecting && !_reconnecting) {
+        // A reconnect is in flight (started by another request). Do NOT tell this caller to
+        // restart Chrome — the attempt has not resolved yet. Ask them to retry shortly; if
+        // the reconnect recovers, the retry sails through, and if it fails, the retry gets
+        // the real restart-Chrome message below.
+        const err = new Error('reconnecting — a fresh connection is being established; retry in a moment.');
+        err.status = 503;
+        throw err;
       }
       if (reachable) {
         // 🔴 Reached here only after the reconnect above already failed — so it is not a
@@ -1190,7 +1220,9 @@ const server = http.createServer(async (req, res) => {
     //    the silent failure this project keeps guarding against. Timeouts especially:
     //    they are the signature of a tab or connection that has died, and they must be
     //    findable after the fact. 400s are the caller's typo and would only be noise.
-    if (status >= 500) {
+    // 🔵 503 is the transient "reconnecting, retry shortly" state — a normal moment, not a
+    //    failure, so it does not get a log line (it would only be noise).
+    if (status >= 500 && status !== 503) {
       const line = e.message.split('\n')[0];
       const url = (req.url || '').split('?')[0];
       console.error(`[act-error] ${new Date().toISOString()} ${status} ${url}: ${line}`);

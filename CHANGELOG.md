@@ -5,6 +5,31 @@ has the detail.
 
 ---
 
+## 0.12.5 — 2026-09-04
+
+### The reconnect now converges to exactly one, from both directions
+
+v0.12.4 cut the reconnect storm from 68 to ~6, but not to 1. Two races remained, and both
+are now closed:
+
+- **Concurrent requests each started their own reconnect.** The failure flag was set only
+  *after* the attempt, so back-to-back requests passed the gate before any of them failed
+  (measured: 6 reconnects in 0.96s, some 2ms apart). A `reconnecting` flag set at the
+  *start* of the attempt now turns those into a transient "retry shortly" (503) instead.
+- **The reconnect attempt's own failure did not set the flag.** When the retry timed out
+  too, it fell into the "reconnect in flight" branch and returned 503 instead of recording
+  the failure — so every later request reconnected again (reproduced locally: `[reconnect]`
+  every ~12s). The retry now falls through to set the flag and throw the restart message.
+
+Reproduced end-to-end locally (a half-dead connection appeared after repeated engine
+restarts) and confirmed `[reconnect]` converges to 1.
+
+Still a loop/race fix, not a recovery: on the reported environment the connection only
+comes back with a Chrome restart. The raw-CDP fallback that actually recovers it is in
+progress.
+
+Fix only; no API change.
+
 ## 0.12.4 — 2026-09-04
 
 ### The one-shot reconnect is now actually one-shot
