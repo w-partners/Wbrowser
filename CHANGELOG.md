@@ -5,6 +5,24 @@ has the detail.
 
 ---
 
+## 0.12.4 — 2026-09-04
+
+### The one-shot reconnect is now actually one-shot
+
+v0.12.3 added a single reconnect to tell a half-dead socket apart from utility-world
+buildup — but the guard was a function argument, which resets on every fresh `connect()`
+call. So "once" became once-per-request: measured 2026-09-04, `[reconnect]` fired **68
+times** in one sitting, each attempt failing and adding a world. The guard is now an
+engine-lifetime flag — after the reconnect fails, later requests skip it and go straight to
+the restart-Chrome message; a successful `connect()` clears it.
+
+Note: this fixes the *loop*, not the underlying recovery. On the reported environment the
+reconnect does not recover the connection (Chrome holds state that only a Chrome restart
+clears — verified: raw CDP stays fully responsive throughout). A thin raw-CDP fallback for
+that case is being designed separately.
+
+Fix only; no API change.
+
 ## 0.12.3 — 2026-09-04
 
 ### A half-dead browser connection now recovers itself, instead of demanding a restart

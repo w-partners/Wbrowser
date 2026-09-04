@@ -133,6 +133,20 @@ def test_connect_reconnects_once_before_blaming_utility_worlds():
     assert "even on a fresh connection" in src
 
 
+def test_reconnect_is_once_engine_wide_not_once_per_request():
+    # 🔴 Reported 2026-09-04 (zalman): [reconnect] logged 68 times in one sitting. The guard
+    #    was a function argument (_reconnecting), which resets on every fresh connect() call,
+    #    so "once" became once-per-request. It must be an engine-lifetime flag: after the
+    #    reconnect fails, later requests skip it until a successful connect clears it.
+    src = (ROOT / "engine.js").read_text()
+    assert "let reconnectFailed = false;" in src, "no engine-wide reconnect flag"
+    # the reconnect branch is gated on the flag being clear
+    assert "!_reconnecting && !reconnectFailed" in src
+    # failure sets it, success clears it
+    assert "reconnectFailed = true;" in src
+    assert "reconnectFailed = false; return;" in src
+
+
 def test_500_errors_are_logged():
     # 🔴 A stalled tab returned 500 to the caller but wrote nothing to the log, so there was
     #    no trail. Anything >=500 must leave a line; 400s (caller typos) stay quiet.

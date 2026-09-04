@@ -46,11 +46,20 @@ let browser = null;
 let ctx = null;
 const tabs = new Map();          // name -> page
 
+// 🔴 Remember, across requests, that the one-shot reconnect already failed. The flag that
+//    guards the reconnect cannot be a function argument: each request calls connect()
+//    fresh, so an argument resets every time and the "once" becomes once-per-request.
+//    Measured 2026-09-04 (zalman): [reconnect] logged 68 times in one sitting because of
+//    exactly that. This engine-lifetime flag makes the reconnect truly one-shot — after it
+//    fails, every later request goes straight to the restart-Chrome message until a
+//    successful connect clears it.
+let reconnectFailed = false;
+
 // The CDP connection can drop (Chrome quits / restarts). Check on every request
 // whether it is still alive and reattach if it died — so we never fail silently
 // on a dead handle.
 async function connect(_reconnecting) {
-  if (browser && browser.isConnected()) return;
+  if (browser && browser.isConnected()) { reconnectFailed = false; return; }
   try {
     browser = await chromium.connectOverCDP(CDP, { timeout: 10000 });
   } catch (e) {
@@ -72,7 +81,7 @@ async function connect(_reconnecting) {
         const r = await fetch(`${CDP}/json/version`, { signal: AbortSignal.timeout(2000) });
         reachable = r.ok;
       } catch { /* leave it false */ }
-      if (reachable && !_reconnecting) {
+      if (reachable && !_reconnecting && !reconnectFailed) {
         // 🔵 Two different faults look identical here — a connectOverCDP timeout while
         //    Chrome answers raw CDP — and they want opposite responses:
         //      • utility-world buildup: only a Chrome restart clears it; reconnecting
@@ -93,10 +102,14 @@ async function connect(_reconnecting) {
       }
       if (reachable) {
         // 🔴 Reached here only after the reconnect above already failed — so it is not a
-        //    half-dead socket (a fresh one would have worked). Say "do not retry" out loud:
-        //    retrying is the obvious move and the wrong one, because every attempt leaves
-        //    another world behind. Measured 2026-08-25: 723 -> 911 in twenty minutes,
-        //    almost entirely from two people diagnosing it.
+        //    half-dead socket (a fresh one would have worked). Remember that, engine-wide,
+        //    so the NEXT request does not reconnect again: without this the "once" is
+        //    once-per-request and the log fills with [reconnect] (measured: 68 times).
+        //    A later successful connect() clears it.
+        reconnectFailed = true;
+        // 🔴 Say "do not retry" out loud: retrying is the obvious move and the wrong one,
+        //    because every attempt leaves another world behind. Measured 2026-08-25:
+        //    723 -> 911 in twenty minutes, almost entirely from two people diagnosing it.
         throw new Error(
           'Do not retry — restart Chrome. Close Chrome fully and run "wb up". '
           + 'Chrome is answering but cannot be attached to even on a fresh connection: '
