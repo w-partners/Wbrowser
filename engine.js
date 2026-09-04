@@ -1325,3 +1325,17 @@ for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP']) {
 }
 // 🔵 beforeExit covers a normal end-of-work exit; 'exit' itself is too late to await.
 process.on('beforeExit', () => { shutdown('beforeExit'); });
+
+// 🔴 Never let a stray rejection or exception take the whole engine down. Reported
+//    2026-09-04: a few requests into the raw-CDP fallback the engine crashed — the caller
+//    got an empty body (not even a 500), and the port went dead. A half-closed websocket
+//    firing 'error' after its awaiters were gone is the likely path. The engine drives the
+//    browser a whole session depends on; one bad request must fail that request, not the
+//    process. Log it (so it is findable) and stay up.
+process.on('unhandledRejection', (reason) => {
+  const msg = (reason && reason.message) ? reason.message.split('\n')[0] : String(reason);
+  console.error(`[unhandledRejection] ${new Date().toISOString()} ${msg}`);
+});
+process.on('uncaughtException', (err) => {
+  console.error(`[uncaughtException] ${new Date().toISOString()} ${(err && err.message || err)}`);
+});

@@ -36,17 +36,33 @@ class RawCDP {
     this.sessionId = null;
   }
 
-  // Attach to the page target matching `tabKey` (an engine tab name stamped into the page)
-  // or, failing that, the first page target. Returns the raw target info used.
+  // Attach to a LIVE page target — preferring one stamped for this tab, but skipping any
+  // that do not answer. 🔴 Reported 2026-09-04 (zalman): the fallback kept picking a
+  // half-dead tab (the very tabs playwright had killed carry our stamp), so every command
+  // timed out even though other tabs answered raw CDP in 3-9ms. So we probe each candidate
+  // with a short Runtime.evaluate and take the first that replies.
   async attach(match) {
     const list = await getJSON(`${this.cdpBase}/json/list`);
     const pages = (Array.isArray(list) ? list : []).filter((t) => t.type === 'page');
     if (!pages.length) throw new Error('rawcdp: no page target to attach to');
-    // Prefer a page whose title carries our stamp for this tab, else the first page.
-    const target = (match && pages.find((t) => (t.title || '').includes(match))) || pages[0];
-    await this._connect(target.webSocketDebuggerUrl);
-    this.target = target;
-    return target;
+    // Try stamped matches first, then the rest — but only accept one that actually answers.
+    const stamped = match ? pages.filter((t) => (t.title || '').includes(match)) : [];
+    const ordered = [...stamped, ...pages.filter((t) => !stamped.includes(t))];
+    let lastErr = null;
+    for (const t of ordered) {
+      try {
+        await this._connect(t.webSocketDebuggerUrl);
+        // A live tab answers this in a few ms; a half-dead one never returns. Probe with a
+        // tight timeout so a dead tab costs ~1.5s, not the full command budget.
+        await this.send('Runtime.evaluate', { expression: '1', returnByValue: true }, 1500);
+        this.target = t;
+        return t;
+      } catch (e) {
+        lastErr = e;
+        this.close();          // drop this socket before trying the next candidate
+      }
+    }
+    throw new Error(`rawcdp: no live page target (tried ${ordered.length}; last: ${lastErr && lastErr.message})`);
   }
 
   _connect(wsUrl) {
@@ -126,7 +142,25 @@ class RawCDP {
     await this.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: box.x, y: box.y, button: 'left', clickCount: 1 });
   }
 
-  close() { try { this.ws && this.ws.close(); } catch { /* already gone */ } }
+  close() {
+    // 🔴 Reject anything still awaiting before dropping the socket — otherwise those
+    //    promises never settle and their awaiters hang forever (and an unhandled ws
+    //    'error' after close could take the engine down). Measured 2026-09-04: the engine
+    //    crashed a few requests into the fallback; a half-closed socket with pending sends
+    //    is the likely path.
+    for (const { reject } of this.pending.values()) {
+      try { reject(new Error('rawcdp: connection closed')); } catch { /* noop */ }
+    }
+    this.pending.clear();
+    try {
+      if (this.ws) {
+        // swallow any late 'error' so it cannot become an unhandled rejection
+        this.ws.addEventListener('error', () => {});
+        this.ws.close();
+      }
+    } catch { /* already gone */ }
+    this.ws = null;
+  }
 }
 
 module.exports = { RawCDP };

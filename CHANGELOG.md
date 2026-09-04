@@ -5,6 +5,27 @@ has the detail.
 
 ---
 
+## 0.13.1 — 2026-09-04
+
+### The raw-CDP fallback now picks a live tab, and a fallback failure can't crash the engine
+
+Two bugs surfaced verifying v0.13.0 against a real half-dead playwright (zalman):
+
+- **The fallback kept attaching to a dead tab.** It took the first stamped page — but the
+  tabs playwright had killed are exactly the ones carrying our stamp, so every command
+  timed out while other tabs answered raw CDP in 3–9ms. `attach()` now probes each
+  candidate with a short `Runtime.evaluate` and takes the first that replies, skipping the
+  dead ones.
+- **A fallback failure could take the whole engine down.** A few requests in, the caller
+  got an empty body (not even a 500) and the port went dead — a half-closed websocket's
+  late `error` becoming an unhandled rejection. Two guards now: `close()` rejects any
+  pending sends and swallows the late error, and the engine has top-level
+  `unhandledRejection`/`uncaughtException` handlers so one bad request fails that request,
+  not the process.
+
+Fix only; no API change. (Verification of the fallback carrying a real session through is
+still on the environment that reproduces the half-dead state.)
+
 ## 0.13.0 — 2026-09-04
 
 ### A raw-CDP fallback keeps you working when playwright's connection is down

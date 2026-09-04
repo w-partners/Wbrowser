@@ -171,6 +171,29 @@ def test_rawcdp_fallback_exists_and_is_gated_on_a_dead_playwright():
     assert "no element matches" in raw and "zero-size box" in raw
 
 
+def test_rawcdp_attach_probes_for_a_live_tab():
+    # 🔴 Reported 2026-09-04 (zalman): the fallback kept picking a half-dead tab (the tabs
+    #    playwright killed carry our stamp), so every command timed out while other tabs
+    #    answered raw CDP in 3-9ms. attach() must probe each candidate and take the first
+    #    that replies, skipping the dead ones.
+    raw = (ROOT / "rawcdp.js").read_text()
+    assert "no live page target" in raw
+    assert "Runtime.evaluate" in raw and "1500" in raw   # short liveness probe
+
+def test_fallback_failure_does_not_kill_the_engine():
+    # 🔴 Reported 2026-09-04: a few requests into the fallback the engine crashed — the
+    #    caller got an empty body (not even a 500) and the port went dead. A half-closed
+    #    websocket's late 'error' becoming an unhandled rejection is the path. Two guards:
+    #    close() rejects pending and swallows the late error; the engine has a top-level
+    #    unhandledRejection/uncaughtException handler so one bad request never takes the
+    #    process down.
+    raw = (ROOT / "rawcdp.js").read_text()
+    assert "rawcdp: connection closed" in raw            # close() rejects pending
+    src = (ROOT / "engine.js").read_text()
+    assert "process.on('unhandledRejection'" in src
+    assert "process.on('uncaughtException'" in src
+
+
 def test_500_errors_are_logged():
     # 🔴 A stalled tab returned 500 to the caller but wrote nothing to the log, so there was
     #    no trail. Anything >=500 must leave a line; 400s (caller typos) stay quiet.
