@@ -93,6 +93,31 @@ def test_engine_opens_new_window_via_cdp_not_newpage():
     assert "Target.createTarget" in src and "newWindow: true" in src
 
 
+def test_newtab_does_not_open_a_second_orphan_page():
+    # 🔴 Reported 2026-09-04: {newtab, goto} added TWO tabs per call — getTab ran first and
+    #    created a page for the unknown tab name, then the newtab block created another and
+    #    overwrote the map entry, orphaning the first as a mark-less about:blank. That blank
+    #    is exactly what piled a session up to 30+ tabs. getTab must be skipped when newtab
+    #    (or newwindow) is set, since those open their own page.
+    src = (ROOT / "engine.js").read_text()
+    assert "(cmd.newtab || cmd.newwindow) ? null : await getTab" in src, \
+        "getTab still runs alongside newtab/newwindow — orphan page returns"
+
+
+def test_engine_reaps_agent_tabs_but_never_marked_by_no_one():
+    # 🔴 Requested 2026-09-04 ("it keeps opening tabs"). Agent tabs must be capped so a
+    #    session cannot reach 30-40 open tabs. Two rules, and the safety rule is absolute:
+    #    a tab is only ever closed if it carries the __wbrowserMark stamp. A human/login tab
+    #    has no mark and must never be counted or closed.
+    src = (ROOT / "engine.js").read_text()
+    assert "function reapAgentTabs" in src
+    assert "MAX_AGENT_TABS" in src
+    # the mark gate: no mark → skip (never close)
+    assert "if (!info || !info.mark) continue;" in src
+    # both entry points reap before opening a page
+    assert src.count("reapAgentTabs(") >= 2, "reaper not called from both newtab and getTab paths"
+
+
 def test_read_timeout_does_not_assert_the_page_changed():
     # 🔴 Reported 2026-09-04: read timed out on a small, static page (1ms of real DOM
     #    work), and the old message "the page kept changing while it was being read"
@@ -106,8 +131,10 @@ def test_read_timeout_does_not_assert_the_page_changed():
     # would add another world), by checking the raw CDP endpoint answers fast.
     assert "utility worlds" in src
     assert "/json/version" in src  # the world-free liveness probe reused in the read path
-    # and it does not claim the page was changing as fact
-    assert "was not confirmed to be changing" in src
+    # and it does not claim the page was changing as fact — it says the timeout is what
+    # happened, not what was observed (the wording spans a line break in the source, so
+    # match the distinctive tail rather than the full sentence).
+    assert "not what was observed" in src
 
 
 def test_agent_name_walks_the_process_tree_not_just_the_parent():

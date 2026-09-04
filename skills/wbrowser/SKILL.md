@@ -134,6 +134,11 @@ wb close     # close only the tabs you opened
 you never pull the window to the front. The tab title shows `[<agent>] …` and the page
 carries a translucent "in control" banner, so the user can always see it is you.
 
+🔵 The engine caps how many tabs agents leave open: when it opens a new one it first
+closes any agent tab that went blank, and if more than 8 agent tabs are alive it closes
+the oldest. So a long session no longer climbs to 30-40 tabs. Only tabs an agent opened
+are touched — a tab you opened by hand, or a login tab, is never counted or closed.
+
 🔴 The flip side, and be honest about it if asked: **moving the mouse does not pause
 you.** You are not yielding the tab, you simply never shared one.
 

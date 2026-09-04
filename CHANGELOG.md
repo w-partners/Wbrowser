@@ -5,6 +5,28 @@ has the detail.
 
 ---
 
+## 0.12.2 — 2026-09-04
+
+### Tabs no longer pile up — agent tabs are reaped, and `newtab` stops orphaning a blank
+
+Two bugs made a session climb to 30-40 open tabs in a short sitting:
+
+- **`newtab` opened two tabs, not one.** `getTab` ran first and created a page for the
+  unknown tab name, then the `newtab` block created another and overwrote it — leaving the
+  first as a mark-less `about:blank` nobody would ever close. `getTab` is now skipped when
+  `newtab`/`newwindow` is set, so exactly one tab is opened.
+- **Nothing ever closed old agent tabs.** The engine now reaps them before opening a new
+  one: an agent tab that has gone to `about:blank` is closed, and if more than 8 agent tabs
+  are still alive the oldest are closed down to that cap.
+
+🔴 **Only tabs an agent opened are ever closed** — they carry a stamp (`__wbrowserMark`).
+A tab you opened by hand, or a login tab, has no stamp and is never counted or closed.
+
+Also: `click` no longer fails the whole action when `scrollIntoViewIfNeeded` can't scroll
+to the element (a fixed/off-screen target) — it scrolls best-effort and lets the click try.
+
+Fixes only; no API change.
+
 ## 0.12.1 — 2026-09-04
 
 ### `read` no longer blames the page for a timeout it did not observe

@@ -318,6 +318,12 @@ async function getTab(name, accountHint, strict, agent) {
   //    the human opened by hand is claimed by nobody — it looks free by every test we can
   //    run. So we stop guessing: an agent gets its own page and never adopts one.
   //
+  // 🔴 Before opening another, clear out tabs agents left behind. Without this they pile
+  //    up — a session that keeps naming new tabs (or reopens after one dies) can reach
+  //    30-40 open tabs in a short sitting, which wastes memory and, via the per-tab
+  //    utility world, slows every later connect. Requested by the master 2026-09-04
+  //    ("it keeps opening tabs").
+  await reapAgentTabs(targetCtx);
   // 🔵 The session is shared, so a new tab is already logged in — that was the real point
   //    of inheriting, and opening a tab keeps it. What is lost is only that the agent
   //    starts on about:blank instead of a page, which every caller follows with a goto.
@@ -325,6 +331,40 @@ async function getTab(name, accountHint, strict, agent) {
   tabs.set(key, page);
   wireLogging(page);       // start recording console / errors / failed requests from here on
   return page;
+}
+
+// Close tabs that agents opened and no longer need. Two rules, both conservative:
+//   1. an agent tab that has gone to about:blank is dead — close it (this is exactly the
+//      abandoned-tab state a failed operation leaves behind).
+//   2. if more than MAX_AGENT_TABS agent tabs are still alive, close the oldest first
+//      (by permanent id — the lowest id is the oldest) until we are back under the cap.
+// 🔴 A tab is "an agent's" ONLY if it carries the __wbrowserMark stamp. A tab the human
+//    opened, or a login tab, carries no mark and is never counted and never closed.
+const MAX_AGENT_TABS = 8;
+async function reapAgentTabs(ctx) {
+  const marked = [];
+  for (const p of ctx.pages()) {
+    if (p.isClosed()) continue;
+    let info = null;
+    try {
+      info = await Promise.race([
+        p.evaluate(() => ({ mark: window.__wbrowserMark, url: location.href })),
+        new Promise((res) => { setTimeout(() => res(null), 600); }),
+      ]);
+    } catch { /* chrome:// / cross-origin — cannot ask, so treat as not-ours */ }
+    if (!info || !info.mark) continue;           // 🔴 no mark → not an agent tab → leave it
+    marked.push({ page: p, id: tabIds.get(p) || 0, blank: (info.url || '') === 'about:blank' });
+  }
+  // rule 1: dead (about:blank) agent tabs
+  for (const t of marked.filter((t) => t.blank)) {
+    try { await t.page.close({ runBeforeUnload: false }); } catch { /* already gone */ }
+  }
+  // rule 2: cap the survivors, oldest id first
+  const alive = marked.filter((t) => !t.blank).sort((a, b) => a.id - b.id);
+  const over = alive.length - MAX_AGENT_TABS;
+  for (let i = 0; i < over; i += 1) {
+    try { await alive[i].page.close({ runBeforeUnload: false }); } catch { /* already gone */ }
+  }
 }
 
 // Summarize the page structure — so we drive by selector, not by coordinates.
@@ -616,11 +656,20 @@ async function act(cmd) {
   // If account is given explicitly use it, otherwise look the URL up in the mapping.
   const explicit = !!cmd.account;
   const acct = cmd.account || (cmd.goto ? accountForUrl(cmd.goto) : null);
-  let page = await getTab(tab, acct, explicit, cmd.agent);
+  // 🔴 Do NOT call getTab when newtab/newwindow is set — those open their own page, and
+  //    getTab would open ANOTHER one first (for an unknown tab name it creates a page),
+  //    leaving an orphan about:blank behind on every call. Measured 2026-09-04: {newtab,
+  //    goto} added TWO tabs per call, one of them a mark-less blank the reaper could not
+  //    see, which is how a session reached 30+ open tabs. Let the block below make the page.
+  let page = (cmd.newtab || cmd.newwindow) ? null : await getTab(tab, acct, explicit, cmd.agent);
   const done = [];
 
   if (cmd.newtab) {
     const c = await pickContext(acct, explicit);
+    // 🔴 Reap before opening — newtab bypasses getTab, so without this it is the main way
+    //    tabs pile up (every {newtab:true} adds one, none are ever removed). The page we
+    //    are about to create has no mark yet, so the reaper cannot touch it.
+    await reapAgentTabs(c);
     page = await c.newPage();
     // Same key shape as getTab — see the note there on why the account is not part of it.
     tabs.set(`${cmd.agent || ''}::${tab}`, page);
@@ -700,7 +749,14 @@ async function act(cmd) {
     // 🔵 Bring it into view first. A person scrolls to what they are clicking; playwright
     //    will too, but only within its own timeout — doing it as a separate step means a
     //    long page does not eat the click budget and fail on something perfectly usable.
-    await el.scrollIntoViewIfNeeded({ timeout: 10000 });
+    // 🔴 But do NOT let scrolling fail the whole click. Some elements never satisfy
+    //    scrollIntoViewIfNeeded — a fixed/sticky node, a zero-size hit target, a first
+    //    match that is an off-screen skip-link — and it then burns its full timeout and
+    //    throws, turning a clickable element into a 500. Measured 2026-09-04: click 'a'
+    //    on toonkit hit an off-screen link and threw `scrollIntoViewIfNeeded: Timeout
+    //    9989ms`. click() does its own scrolling, so a shorter, non-fatal pre-scroll is
+    //    a nicety, not a gate — swallow its failure and let click() try.
+    await el.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
     await el.click({ timeout: 10000 });
     let what = cmd.click;
     try {
