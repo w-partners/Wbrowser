@@ -24,6 +24,26 @@ function getJSON(url) {
   });
 }
 
+// Decide which page targets the fallback may attach to, honouring the agent identity.
+// Pulled out as a pure function precisely because getting it wrong leaks across agents and
+// there was no way to unit-test it inline. See attach() for the two lessons this balances.
+//
+//   match given  → EXACTLY this agent's stamped tabs. Never widened to other agents' tabs;
+//                  if none are stamped for this agent, throw (attach refuses to borrow one).
+//   no match     → every page (an unnamed caller has no identity to protect).
+function chooseCandidates(pages, match) {
+  if (!match) return pages;
+  const stamped = pages.filter((t) => (t.title || '').includes(match));
+  if (!stamped.length) {
+    throw new Error(
+      `rawcdp: no tab stamped for '${match}'. The engine is on the raw-CDP fallback (its `
+      + `playwright connection is down) and this agent has no live tab of its own to drive. `
+      + `Refusing to attach to another agent's tab. Restart the engine (wb down; wb up), or `
+      + `open this agent's tab first with a go that carries --agent ${match}.`);
+  }
+  return stamped;
+}
+
 // Open a raw CDP session to one page target and run a few commands on it. Uses Node's
 // built-in WebSocket (Node 18+). Every send has its own timeout so a truly dead target
 // still fails fast instead of hanging.
@@ -36,18 +56,28 @@ class RawCDP {
     this.sessionId = null;
   }
 
-  // Attach to a LIVE page target — preferring one stamped for this tab, but skipping any
-  // that do not answer. 🔴 Reported 2026-09-04 (zalman): the fallback kept picking a
-  // half-dead tab (the very tabs playwright had killed carry our stamp), so every command
-  // timed out even though other tabs answered raw CDP in 3-9ms. So we probe each candidate
-  // with a short Runtime.evaluate and take the first that replies.
+  // Attach to a LIVE page target that belongs to THIS agent — never to another agent's tab.
+  //
+  // 🔴 Two separate lessons collide here, and getting one right broke the other:
+  //   (1) Reported 2026-09-04 (zalman): the fallback kept picking a half-dead tab (the very
+  //       tabs playwright had killed still carry our stamp), so every command timed out even
+  //       though other tabs answered raw CDP in 3-9ms. Fix: probe each candidate and skip the
+  //       ones that do not answer.
+  //   (2) Reported 2026-09-05 (idifference): the fix for (1) had widened the candidate list to
+  //       ALL pages ([...stamped, ...everyone-else]), so when this agent's own tab was slow to
+  //       answer the probe, the loop fell through to a DIFFERENT agent's tab — a logged-in
+  //       Threads page — and ran `eval`/`shot` there. That is a boundary leak: read-only
+  //       today, but the same lane carries click/press. This tool partitions tabs by NAME, and
+  //       the fallback must honour that name, not abandon it under load.
+  //
+  // So: when a match (the agent name) is given, ONLY that agent's stamped tabs are candidates.
+  // If none of them answer, we FAIL — we do not silently borrow a stranger's tab. Only when no
+  // match is given (an unnamed caller) may we consider every page.
   async attach(match) {
     const list = await getJSON(`${this.cdpBase}/json/list`);
     const pages = (Array.isArray(list) ? list : []).filter((t) => t.type === 'page');
     if (!pages.length) throw new Error('rawcdp: no page target to attach to');
-    // Try stamped matches first, then the rest — but only accept one that actually answers.
-    const stamped = match ? pages.filter((t) => (t.title || '').includes(match)) : [];
-    const ordered = [...stamped, ...pages.filter((t) => !stamped.includes(t))];
+    const ordered = chooseCandidates(pages, match);   // pure, unit-tested: honours identity
     let lastErr = null;
     for (const t of ordered) {
       try {
@@ -62,7 +92,10 @@ class RawCDP {
         this.close();          // drop this socket before trying the next candidate
       }
     }
-    throw new Error(`rawcdp: no live page target (tried ${ordered.length}; last: ${lastErr && lastErr.message})`);
+    // 🔴 Every candidate was this agent's own tab (when match was given) — so failing here means
+    //    "your tabs are all unresponsive", never "I gave up and grabbed someone else's".
+    const scope = match ? `for '${match}' (${ordered.length} stamped)` : `(${ordered.length} pages)`;
+    throw new Error(`rawcdp: no live page target ${scope}; last: ${lastErr && lastErr.message}`);
   }
 
   _connect(wsUrl) {
@@ -199,4 +232,4 @@ class RawCDP {
   }
 }
 
-module.exports = { RawCDP };
+module.exports = { RawCDP, chooseCandidates };

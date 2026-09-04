@@ -235,6 +235,20 @@ _engine_why() {
   esac
 }
 
+# 🔴 Gate a command on the engine, and when it is NOT reachable say WHICH — "not running" and
+#    "running but too slow to answer in ${_HEALTH_T}s" want opposite responses from the reader.
+#    Reported 2026-09-05 (idifference): `wb status` (given WB_HEALTH_TIMEOUT=30) said ✅ while
+#    `wb tabs` (default 8s) said "Engine is not running" for the SAME live-but-slow engine —
+#    a bare `_engine_up ||` throws the reason away and reads as "not started", sending the
+#    reader to `wb up` when the real fix is a longer timeout or an engine restart. One helper,
+#    used by every engine-gated command, so none of them can silently misdiagnose slow as dead.
+_require_engine() {
+  _engine_up && return 0
+  echo "❌ Engine ($ENGINE): $(_engine_why)"
+  echo "   Start it with ./wb up   (if it is listed above as alive-but-slow, it is already up)"
+  exit 1
+}
+
 # Accept --account <hint> and --tab <name> at ANY position. Without an account, the default
 # window; without a tab, 'main'.
 # 🔴 --tab used to be parsed only inside `go` (in mkcmd), so `wb read --tab tk` silently
@@ -442,7 +456,7 @@ if not d.get('browser'):
     #    /json directly and number the tabs itself, while the engine numbered them again
     #    from its own page list — so `./wb take 3` could mean a different tab than the 3
     #    you just read here. One counter, one place.
-    _engine_up || { echo "❌ Engine is not running — ./wb up"; exit 1; }
+    _require_engine
     curl -s --max-time 30 "$ENGINE/tabs" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
@@ -471,7 +485,7 @@ print('  ./wb release    give it back')
     case "${1:-}" in
       ''|*[!0-9]*) echo "Usage: ./wb take <#> [tab-name]   — <#> is a number from ./wb tabs"; exit 1 ;;
     esac
-    _engine_up || { echo "❌ Engine is not running — ./wb up"; exit 1; }
+    _require_engine
     # 🔴 Refuse rather than take a tab under an empty name. An unnamed hold cannot be told
     #    apart from anyone else's, and ./wb release would not know what to give back.
     [ -n "$AGENT_NAME" ] || {
@@ -493,7 +507,7 @@ print(f\"   The agent carries on from here. ./wb release gives it back.\")
 "
     ;;
   release)
-    _engine_up || { echo "❌ Engine is not running — ./wb up"; exit 1; }
+    _require_engine
     curl -s --max-time 30 -X POST "$ENGINE/release" -H 'Content-Type: application/json' \
       -d "{\"agent\": \"$AGENT_NAME\", \"tab\": \"${1:-main}\"}" \
       | python3 -c "

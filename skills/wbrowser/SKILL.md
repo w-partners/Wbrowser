@@ -156,6 +156,13 @@ CDP), the engine falls back to a **raw-CDP lane** so you keep working — `go`/`
 opening tabs/windows needs a Chrome restart. Restart Chrome (`wb up`) to restore the full
 engine when you can.
 
+🔴 On that fallback lane, a command only ever touches **your own** tabs. If your agent has no
+live tab of its own, the fallback **refuses** with `no tab stamped for '<agent>' … refusing
+to attach to another agent's tab` — it will not borrow a stranger's tab, even the only live
+one. (Before 0.13.8 it could, under load: a slow own-tab made `eval`/`shot` fall through to
+another agent's logged-in page. Fixed.) If you hit that refusal, restart the engine
+(`wb down; wb up`) or open your tab first with a `go` carrying `--agent <you>`.
+
 ## Tabs
 
 ```bash

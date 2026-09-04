@@ -5,6 +5,34 @@ has the detail.
 
 ---
 
+## 0.13.8 — 2026-09-05
+
+### The raw-CDP fallback no longer attaches to another agent's tab
+
+The deeper cause behind the wrong-tab reports. When the engine's playwright connection goes
+half-dead (which happens under load), commands fall to a raw-CDP fallback lane. That lane's
+tab picker had been widened — while fixing a *different* bug (skipping half-dead tabs) — to
+consider **every** open page. So when this agent's own tab was slow to answer the liveness
+probe, the loop fell through to a *different* agent's tab and ran `eval` / `shot` / `click`
+there. In the field this saved another agent's logged-in page to the caller's disk and ran
+JavaScript in a session that was never the caller's — a boundary leak, not just a wrong
+screenshot, and it happened **even with `--agent` set correctly** because the leak was one
+layer below the CLI.
+
+- With an agent name, the fallback's candidate tabs are now **exactly that agent's stamped
+  tabs** — never widened to other agents'. If none of them are live, it **fails, named**
+  (`no tab stamped for '<agent>' … refusing to attach to another agent's tab`) instead of
+  borrowing the nearest live one. Only an unnamed caller (no identity to protect) may fall
+  back to any page. The half-dead-tab skip from 0.13.x is kept — within the agent's own tabs.
+- `wb tabs`, `wb take`, `wb release` now report **why** an engine is unreachable — "no answer
+  within Ns … alive but too slow" — instead of a flat "Engine is not running". A slow engine
+  was being called dead, sending people to `wb up` when the engine was already up. `wb status`
+  already did this; now every engine-gated command does.
+
+Both diagnosed from source (rawcdp.js:44, wb's engine gate) after a peer's field reports.
+
+---
+
 ## 0.13.7 — 2026-09-05
 
 ### `--agent` is now a real flag; unknown flags fail instead of being swallowed

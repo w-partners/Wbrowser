@@ -175,3 +175,43 @@ def test_cdp_probe_honours_its_own_timeout(tmp_path):
         assert "❌ Chrome" in p2.stdout, f"WB_CDP_TIMEOUT=1 did not shorten the wait:\n{p2.stdout}"
     finally:
         proc.terminate()
+
+
+def test_tabs_says_slow_not_dead_when_engine_is_alive_but_slow(tmp_path):
+    """🔴 Reported 2026-09-05 (idifference): `wb status` (WB_HEALTH_TIMEOUT=30) said the engine
+    was up while `wb tabs` (default timeout) said "Engine is not running" for the SAME live-but-
+    slow engine. A bare `_engine_up ||` throws the reason away and reads as "never started",
+    sending the reader to `wb up` when the fix is a longer timeout / a restart. Every engine-
+    gated command must distinguish slow from dead, the way status already does.
+    """
+    import subprocess, textwrap, time, socket
+    port = 7993
+    srv = tmp_path / "slowhealth.js"
+    # /health answers 200 with a good body, but only after 3s — so a 1s probe times out (000)
+    # even though the engine is plainly alive and listening.
+    srv.write_text(textwrap.dedent("""
+        const http = require("http");
+        http.createServer((q, r) => setTimeout(() => {
+          r.writeHead(200, {"Content-Type": "application/json"});
+          r.end(JSON.stringify({ok: true, browser: true, build: "t", startedAt: "x"}));
+        }, 3000)).listen(%d, "127.0.0.1");
+    """ % port))
+    proc = subprocess.Popen([shutil.which("node"), str(srv)],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        for _ in range(40):
+            with socket.socket() as s:
+                if s.connect_ex(("127.0.0.1", port)) == 0:
+                    break
+            time.sleep(0.25)
+        env = {**os.environ, "WBROWSER_PORT": str(port), "WB_HEALTH_TIMEOUT": "1"}
+        p = subprocess.run([str(ROOT / "wb"), "tabs"], cwd=ROOT, env=env,
+                           capture_output=True, text=True, timeout=60)
+        out = p.stdout + p.stderr
+        # 🔴 The censored message must be gone: a slow engine is not "not running".
+        assert "not running" not in out, f"tabs still calls a slow engine 'not running':\n{out}"
+        # It must instead say WHY (slow / no answer within Ns), like status does.
+        assert "no answer within" in out or "too slow" in out, \
+            f"tabs did not explain that the engine was slow:\n{out}"
+    finally:
+        proc.terminate()
