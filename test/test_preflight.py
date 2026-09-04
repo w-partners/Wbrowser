@@ -136,3 +136,42 @@ def test_slow_is_not_reported_as_dead(tmp_path):
         assert "no answer within 1s" in out and "WB_HEALTH_TIMEOUT" in out, out
     finally:
         proc.terminate()
+
+
+def test_cdp_probe_honours_its_own_timeout(tmp_path):
+    """🔴 Reported 2026-09-04: `_cdp_up` (the Chrome/CDP check behind `wb status`) had a
+    hardcoded 2s timeout while `_engine_up` honoured WB_HEALTH_TIMEOUT. On a loaded box a
+    healthy Chrome answering /json/version just over 2s was read as "❌ Chrome", and the
+    layer-diagnosis then sent people to restart Chrome (closing other agents' tabs).
+    A slow CDP is not a dead CDP — and the limit must be overridable, like the engine one.
+    """
+    import subprocess, textwrap, time, socket
+    port = 9298
+    srv = tmp_path / "slowcdp.js"
+    srv.write_text(textwrap.dedent("""
+        const http = require("http");
+        http.createServer((q, r) => setTimeout(() => {
+          r.writeHead(200, {"Content-Type": "application/json"});
+          r.end(JSON.stringify({Browser: "Chrome/1.2.3", webSocketDebuggerUrl: "ws://x"}));
+        }, 4000)).listen(%d, "127.0.0.1");
+    """ % port))
+    proc = subprocess.Popen([shutil.which("node"), str(srv)],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        for _ in range(40):
+            with socket.socket() as s:
+                if s.connect_ex(("127.0.0.1", port)) == 0:
+                    break
+            time.sleep(0.25)
+        env = {**os.environ, "WBROWSER_CDP_PORT": str(port)}
+        # Default (5s) must call a 4s reply alive — slow is not dead.
+        p = subprocess.run([str(ROOT / "wb"), "status"], cwd=ROOT, env=env,
+                           capture_output=True, text=True, timeout=90)
+        assert "✅ Chrome" in p.stdout, f"a 4s CDP reply was called dead:\n{p.stdout}"
+        # And the limit is overridable: a 1s budget on the same 4s reply reads as down.
+        p2 = subprocess.run([str(ROOT / "wb"), "status"], cwd=ROOT,
+                            env={**env, "WB_CDP_TIMEOUT": "1"},
+                            capture_output=True, text=True, timeout=90)
+        assert "❌ Chrome" in p2.stdout, f"WB_CDP_TIMEOUT=1 did not shorten the wait:\n{p2.stdout}"
+    finally:
+        proc.terminate()

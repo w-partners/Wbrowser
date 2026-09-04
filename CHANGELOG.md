@@ -5,6 +5,23 @@ has the detail.
 
 ---
 
+## 0.13.6 — 2026-09-05
+
+### `wb status`'s Chrome check honours a timeout override, like the engine check
+
+`_cdp_up` (the CDP liveness probe behind `wb status`) had a hardcoded 2s timeout, even
+though the comment right beside it says a timeout "cannot be a constant — slow is not
+dead". That lesson had reached `_engine_up` (8s, `WB_HEALTH_TIMEOUT`) but not `_cdp_up`.
+On a loaded machine a healthy Chrome answering `/json/version` just over 2s was read as
+"❌ Chrome"; the layer-diagnosis then treats that as layer 1 (Chrome absent) and sends
+you to restart Chrome — which closes other agents' and the master's tabs. `_cdp_up` now
+takes `WB_CDP_TIMEOUT` (default 5, smaller than `/health` because raw CDP is lighter).
+Pointed out by a peer reading the source.
+
+Fix only; no behaviour change beyond the timeout.
+
+---
+
 ## 0.13.4 — 2026-09-04
 
 ### "Can't attach" now tells you to restart the engine first, not Chrome

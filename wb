@@ -189,11 +189,17 @@ _json() {
     python3 "$DIR/mkcmd.py" "$@"
 }
 
-_cdp_up()    { curl -s --max-time 2 "$CDP/json/version"  2>/dev/null | grep -q Browser; }
 # 🔴 The timeout is a guess about how loaded the machine is, so it cannot be a
 #    constant. Measured 2026-08-31 on a box at load 26: /health answered 200 in
 #    11.2s, and a 2s limit called that "not running" — the engine was fine and the
-#    machine was busy. Slow is not dead. Override with WB_HEALTH_TIMEOUT.
+#    machine was busy. Slow is not dead. Override with WB_HEALTH_TIMEOUT / WB_CDP_TIMEOUT.
+# 🔴 This applied to BOTH probes but only _engine_up honoured it — _cdp_up was a hardcoded
+#    2s (pointed out 2026-09-04). On a loaded machine a healthy Chrome answering /json/version
+#    just over 2s was read as "❌ Chrome", and the layer-diagnosis then sent people to restart
+#    Chrome (which closes other agents' / the master's tabs). raw CDP is lighter than /health
+#    (no playwright), so a smaller default is fine — but it must still be overridable.
+_CDP_T="${WB_CDP_TIMEOUT:-5}"
+_cdp_up()    { curl -s --max-time "$_CDP_T" "$CDP/json/version"  2>/dev/null | grep -q Browser; }
 _HEALTH_T="${WB_HEALTH_TIMEOUT:-8}"
 _engine_up() { curl -s --max-time "$_HEALTH_T" "$ENGINE/health" 2>/dev/null | grep -q '"ok"'; }
 
