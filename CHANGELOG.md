@@ -5,6 +5,24 @@ has the detail.
 
 ---
 
+## 0.13.4 — 2026-09-04
+
+### "Can't attach" now tells you to restart the engine first, not Chrome
+
+When playwright cannot reach the page, the engine used to prescribe "restart Chrome" — the
+heavy move that closes open windows (which may be the master's or another agent's). Reported
+2026-09-04 (idifference): the stale state was in the *engine's* playwright connection, not
+Chrome; restarting Chrome left the symptom, while `wb down && wb up` cleared it. And when
+Chrome and the engine are both alive with just a stale link, `wb up` is a no-op that changes
+nothing — someone followed the old prescription, launched a fresh Chrome, and the symptom
+stayed.
+
+The connect-timeout and read-timeout messages (and the SKILL troubleshooting) now say:
+**restart the engine first** (`wb down && wb up` — light, touches nobody else's tabs), and
+restart Chrome only if that fails and only with the master's OK.
+
+Docs/message only; no behaviour change.
+
 ## 0.13.3 — 2026-09-04
 
 ### `--tab` works in any position; `goto` stops reporting a blank page as success

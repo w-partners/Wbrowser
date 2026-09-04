@@ -148,15 +148,25 @@ async function connect(_reconnecting) {
         //    once-per-request and the log fills with [reconnect] (measured: 68 times).
         //    A later successful connect() clears it.
         reconnectFailed = true;
-        // 🔴 Say "do not retry" out loud: retrying is the obvious move and the wrong one,
-        //    because every attempt leaves another world behind. Measured 2026-08-25:
-        //    723 -> 911 in twenty minutes, almost entirely from two people diagnosing it.
+        // 🔴 Restart the ENGINE first, not Chrome. Reported 2026-09-04 (idifference): the
+        //    stale state that blocks connectOverCDP can live in the engine's playwright
+        //    client, not (only) in Chrome — restarting Chrome left the symptom while
+        //    `wb down && wb up` cleared it. The old message said "restart Chrome" first,
+        //    which is the heavy, tab-killing move (it closes a window that may be the
+        //    master's or another agent's) — and when both Chrome and the engine are alive
+        //    with just a stale link, `wb up` is a no-op that changes nothing. So: engine
+        //    restart first (light, touches nobody else's tabs); Chrome restart only if that
+        //    fails, and only with the master's OK.
+        // 🔴 And do not retry the request — every reconnect attempt leaves another utility
+        //    world behind. Measured 2026-08-25: 723 -> 911 in twenty minutes from diagnosing.
         throw new Error(
-          'Do not retry — restart Chrome. Close Chrome fully and run "wb up". '
-          + 'Chrome is answering but cannot be attached to even on a fresh connection: '
-          + 'playwright contexts from earlier connections have built up, and Chrome holds '
-          + 'them until it exits. Every further attempt adds more. Only a Chrome restart '
-          + `clears them. (original: ${e.message.split('\n')[0]})`,
+          'Do not retry. First restart the ENGINE — "wb down && wb up" — which is light and '
+          + 'does not touch anyone else\'s tabs; the stale state is often in the engine\'s '
+          + 'playwright connection, not Chrome. If that does not clear it, restart Chrome '
+          + '(heavier — it closes open windows, which may be the master\'s or another '
+          + 'agent\'s, so get the master\'s OK first): utility contexts from earlier '
+          + 'connections can build up inside Chrome and only a Chrome restart clears those. '
+          + `(original: ${e.message.split('\n')[0]})`,
         );
       }
     }
@@ -1069,9 +1079,12 @@ async function act(cmd) {
       } catch { /* leave false */ }
       result.readError = cdpFast
         ? 'read: timed out after 30s. Chrome answers raw CDP instantly, so the page is '
-          + 'fine — playwright cannot reach its execution context, usually because utility '
-          + 'worlds from earlier connections have built up. Restart Chrome ("wb up") to '
-          + 'clear them; do not retry, each attempt adds more. (Not an endless feed.)'
+          + 'fine — playwright cannot reach its execution context. First restart the ENGINE '
+          + '("wb down && wb up") — the stale state is often in the engine\'s connection, and '
+          + 'this touches nobody else\'s tabs. If that does not clear it, restart Chrome (get '
+          + 'the master\'s OK — it closes open windows): utility worlds from earlier '
+          + 'connections can build up inside Chrome. Do not retry, each attempt adds more. '
+          + '(Not an endless feed.)'
         : 'read: timed out after 30s — the page may still be changing as it is read (an '
           + 'endless feed does this), or the read did not return. The page was not '
           + 'confirmed to be changing; this is what timed out, not what was observed.';

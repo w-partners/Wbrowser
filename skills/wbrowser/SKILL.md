@@ -109,12 +109,16 @@ returns both.
 ### When `read` times out but the page is fine
 
 If `read` times out and the message says Chrome answers raw CDP instantly, the page is
-not the problem — playwright cannot reach its execution context because *utility worlds*
-from earlier connections have built up inside Chrome (one per frame per connection, held
-until Chrome restarts). **Restart Chrome (`wb up`); do not retry** — each attempt adds
-another world and moves it further from working. This piles up fastest from repeated
-reconnects (many `wb up`/restart cycles, or `kill -9` on the engine), not from normal
-use, which attaches once and reuses it.
+not the problem — playwright cannot reach its execution context. **First restart the
+engine — `wb down && wb up`.** The stale connection often lives in the engine's playwright
+client, not Chrome, and an engine restart is light and touches nobody else's tabs (measured
+2026-09-04: restarting Chrome left the symptom; `wb down && wb up` cleared it). **Only if
+that does not clear it, restart Chrome** — heavier, because it closes open windows that may
+be the master's or another agent's, so get the master's OK first: *utility worlds* from
+earlier connections can build up inside Chrome (one per frame per connection, held until
+Chrome restarts) and only a Chrome restart clears those. Do not retry either way — each
+attempt adds another world. This piles up fastest from repeated reconnects (many restart
+cycles, or `kill -9` on the engine), not from normal use.
 
 🔵 On WSL with Chrome running on the Windows side, a tab pointed at `127.0.0.1:<port>`
 resolves to Windows itself and can hang loading forever; while that tab is open, engine

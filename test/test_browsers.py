@@ -129,8 +129,11 @@ def test_connect_reconnects_once_before_blaming_utility_worlds():
     assert "async function connect(_reconnecting)" in src
     assert "await connect(true);" in src, "no single reconnect attempt"
     assert "!_reconnecting" in src, "reconnect not guarded against looping"
-    # the restart-Chrome message must be reachable only AFTER the reconnect failed
-    assert "even on a fresh connection" in src
+    # the message reached only AFTER the reconnect failed must prescribe the ENGINE restart
+    # first (light, tab-safe) and Chrome restart only as the heavier fallback. Updated
+    # 2026-09-04 (idifference): the stale state is often the engine's connection, not Chrome.
+    assert "First restart the ENGINE" in src
+    assert "get the master\\'s OK first" in src   # Chrome restart is gated behind approval
 
 
 def test_reconnect_is_once_engine_wide_not_once_per_request():
