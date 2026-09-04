@@ -5,6 +5,27 @@ has the detail.
 
 ---
 
+## 0.13.9 — 2026-09-05
+
+### A hung tab is dropped and you're told to retry — not left stuck behind a Chrome restart
+
+Follow-up to 0.13.8. A long-reused tab can end up with a **hung renderer**: `/json/list` and
+the browser-level CDP domains answer instantly, but `Page.enable` / `Runtime.evaluate` on that
+one tab time out — even `about:blank` does. An engine restart does not help, because the engine
+keeps holding that same dead tab; a Chrome restart does not help either if the fallback keeps
+re-selecting it. (Diagnosed with a peer across two machines: same Chrome build, same WSL2 — one
+machine's tab was hung, the other's identical setup was fine, so it is the tab, not the tool.)
+
+On the raw-CDP fallback, when **this agent's own** stamped tabs all fail the liveness probe, the
+fallback now **closes them** over `GET /json/close/<id>` — which the browser process serves even
+when the renderer is hung — and fails with a message telling you to run the command again (the
+retry opens a fresh tab). Only tabs stamped for this agent are ever closed; a stranger's tab is
+never touched (the 0.13.8 isolation still holds). No Chrome restart, no master approval needed.
+
+Reported and verified by a peer.
+
+---
+
 ## 0.13.8 — 2026-09-05
 
 ### The raw-CDP fallback no longer attaches to another agent's tab

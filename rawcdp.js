@@ -24,6 +24,22 @@ function getJSON(url) {
   });
 }
 
+// Close a page target by id over Chrome's HTTP endpoint (GET /json/close/<id>).
+// 🔴 This works even when the tab's renderer is hung: /json/* is served by the BROWSER
+//    process, not the renderer, so it answers when Page/Runtime on that tab time out.
+//    Reported 2026-09-05 (idifference): a long-reused tab's renderer stopped answering
+//    Page.enable/Runtime.evaluate while /json/list stayed instant; the fix is to drop that
+//    one tab, not restart Chrome. Best-effort: a close that fails must not mask the real
+//    error we are about to throw.
+function closeTarget(cdpBase, id) {
+  return new Promise((resolve) => {
+    http.get(`${cdpBase}/json/close/${id}`, (r) => {
+      r.on('data', () => {});
+      r.on('end', () => resolve(true));
+    }).on('error', () => resolve(false));
+  });
+}
+
 // Decide which page targets the fallback may attach to, honouring the agent identity.
 // Pulled out as a pure function precisely because getting it wrong leaks across agents and
 // there was no way to unit-test it inline. See attach() for the two lessons this balances.
@@ -79,6 +95,7 @@ class RawCDP {
     if (!pages.length) throw new Error('rawcdp: no page target to attach to');
     const ordered = chooseCandidates(pages, match);   // pure, unit-tested: honours identity
     let lastErr = null;
+    const dead = [];
     for (const t of ordered) {
       try {
         await this._connect(t.webSocketDebuggerUrl);
@@ -89,7 +106,28 @@ class RawCDP {
         return t;
       } catch (e) {
         lastErr = e;
+        dead.push(t);          // this candidate did not answer — remember it
         this.close();          // drop this socket before trying the next candidate
+      }
+    }
+    // Nothing answered. When these were THIS agent's own stamped tabs (match given), they are
+    // hung renderers holding this agent's slot — the exact state idifference hit. Close them
+    // over HTTP (the browser process answers even when the renderer does not) and tell the
+    // caller to retry: the next command opens a fresh tab. We only ever close tabs stamped for
+    // this agent, so a stranger's tab is never touched. Closing does nothing to a live tab we
+    // simply could not reach for another reason — but a tab that failed a 1.5s `1+1` probe is
+    // not one a retry would have salvaged, and leaving it holds the slot forever.
+    if (match && dead.length) {
+      let closed = 0;
+      for (const t of dead) {
+        if (t.id && await closeTarget(this.cdpBase, t.id)) closed += 1;
+      }
+      if (closed) {
+        throw new Error(
+          `rawcdp: '${match}' had ${closed} tab(s) whose renderer had stopped responding `
+          + `(Page/Runtime timed out while the browser itself answered). Closed the stale `
+          + `tab(s). Run the command again — it will open a fresh tab. No other agent's tab `
+          + `was touched.`);
       }
     }
     // 🔴 Every candidate was this agent's own tab (when match was given) — so failing here means
@@ -232,4 +270,4 @@ class RawCDP {
   }
 }
 
-module.exports = { RawCDP, chooseCandidates };
+module.exports = { RawCDP, chooseCandidates, closeTarget };

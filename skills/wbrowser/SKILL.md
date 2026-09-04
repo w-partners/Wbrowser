@@ -163,6 +163,12 @@ one. (Before 0.13.8 it could, under load: a slow own-tab made `eval`/`shot` fall
 another agent's logged-in page. Fixed.) If you hit that refusal, restart the engine
 (`wb down; wb up`) or open your tab first with a `go` carrying `--agent <you>`.
 
+🔵 If your own tab's **renderer** has hung (its `Page`/`Runtime` time out while `/json/list`
+still answers — a long-reused tab can reach this), the fallback **closes that tab for you** and
+says so: `'<agent>' had N tab(s) whose renderer had stopped responding … closed the stale
+tab(s). Run the command again`. Just re-run — it opens a fresh tab. No Chrome restart needed,
+and only your own tabs are ever closed. (0.13.9)
+
 ## Tabs
 
 ```bash
