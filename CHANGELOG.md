@@ -5,6 +5,27 @@ has the detail.
 
 ---
 
+## 0.13.3 — 2026-09-04
+
+### `--tab` works in any position; `goto` stops reporting a blank page as success
+
+Two silent failures reported 2026-09-04 (idifference):
+
+- **`--tab` after the command was dropped.** `wb read --tab tk` silently discarded both
+  tokens and read the *default* tab — usually an about:blank the agent never meant to be on
+  — costing 20 minutes diagnosing a "dead site" that was really a blank tab. `--tab` was
+  only parsed inside `go`; it is now parsed in `wb` at any position, for every command, and
+  reaches the named tab. `wb --tab tk read` and `wb read --tab tk` are now the same.
+- **`goto` reported success while the tab stayed on about:blank.** playwright can resolve a
+  navigation (no error, no timeout) and yet never leave the page — seen with
+  http / IP-literal / non-standard-port targets. `goto` now checks where it actually landed
+  and throws (502) if it is about:blank or a different origin, instead of a silent success.
+  It also surfaces a 4xx/5xx HTTP status (`httpStatus`) so a "200 pretending to be a 404" is
+  visible without opening the console — without throwing, since visiting an error page on
+  purpose is legitimate.
+
+Fixes only; no API change.
+
 ## 0.13.2 — 2026-09-04
 
 ### Fallback click understands playwright selectors; two more unhandled-rejection paths closed

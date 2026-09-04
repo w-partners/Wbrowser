@@ -8,7 +8,9 @@ well-formed -- json.dumps guarantees that. The point is that the *meaning* of an
 argument survives the trip: a space stays a space, a quote does not truncate the
 text, and a flag changes one field rather than being swallowed into the payload.
 """
+import json
 import os
+import subprocess
 import sys
 import unittest
 
@@ -82,6 +84,39 @@ class TestOtherOps(unittest.TestCase):
 
     def test_shot_takes_no_arguments(self):
         self.assertEqual(mkcmd.build(["shot"]), {"shot": True})
+
+
+class TestTabAtAnyPosition(unittest.TestCase):
+    # 🔴 Reported 2026-09-04: `wb read --tab tk` silently dropped both tokens and read the
+    #    DEFAULT tab (usually an about:blank), costing 20 minutes diagnosing a "dead site".
+    #    --tab is now parsed in wb (any position, any command) and arrives via WIN_TAB; mkcmd
+    #    attaches it. Run mkcmd as a subprocess because the WIN_TAB handling is in __main__.
+    MK = os.path.join(os.path.dirname(__file__), "..", "mkcmd.py")
+
+    def _run(self, args, win_tab=None):
+        env = dict(os.environ)
+        if win_tab is not None:
+            env["WIN_TAB"] = win_tab
+        out = subprocess.run([sys.executable, self.MK, *args], env=env,
+                             capture_output=True, text=True).stdout
+        return json.loads(out)
+
+    def test_win_tab_attaches_to_read(self):
+        cmd = self._run(["read"], win_tab="tk")
+        self.assertEqual(cmd.get("tab"), "tk")
+
+    def test_win_tab_attaches_to_eval(self):
+        cmd = self._run(["eval", "1+1"], win_tab="right")
+        self.assertEqual(cmd.get("tab"), "right")
+
+    def test_no_win_tab_means_no_tab_key(self):
+        cmd = self._run(["read"], win_tab="")
+        self.assertNotIn("tab", cmd)
+
+    def test_explicit_go_tab_is_not_overwritten_by_win_tab(self):
+        # go --tab set it in build(); an env WIN_TAB must not clobber an explicit one.
+        cmd = self._run(["go", "https://a.com", "--tab", "explicit"], win_tab="fromenv")
+        self.assertEqual(cmd.get("tab"), "explicit")
 
 
 class TestGoWindowAndTab(unittest.TestCase):

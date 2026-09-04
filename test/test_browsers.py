@@ -269,3 +269,26 @@ def test_roster_lookup_is_gated_and_carries_no_hardcoded_url():
     ips = re.findall(r'https?://(\d+\.\d+\.\d+\.\d+)', src)
     leaked = [ip for ip in ips if not ip.startswith('127.')]
     assert not leaked, f"a routable IP leaked into wb: {leaked}"
+
+
+def test_goto_that_lands_on_about_blank_is_not_reported_as_success():
+    # 🔴 Reported 2026-09-04 (idifference): `goto http://<ip>:3100/ko/home` returned success
+    #    every time but location.href stayed about:blank — playwright resolved the navigation
+    #    without leaving the page (http / IP-literal / non-standard-port / download-typed
+    #    response). It cost 20 minutes because nothing failed. goto now checks where it
+    #    actually landed and throws (502) instead of a silent success.
+    src = (ROOT / "engine.js").read_text()
+    assert "goto reported success but the tab is at" in src
+    assert "This is not a silent success" in src
+    # the check must run on the SUCCESS path, not only on timeout
+    assert "const where = await page.evaluate(() => location.href)" in src
+
+
+def test_goto_surfaces_http_error_status():
+    # 🔵 Suggested 2026-09-04 (idifference): a goto that 404s still "succeeds" (the tab loads
+    #    the server's 404 body) and the caller cannot see it without the console. We report a
+    #    4xx/5xx status instead of hiding it — but do NOT throw, since visiting an error page
+    #    on purpose is legitimate.
+    src = (ROOT / "engine.js").read_text()
+    assert "result.httpStatus = s" in src
+    assert "s >= 400" in src

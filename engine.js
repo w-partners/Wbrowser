@@ -827,7 +827,32 @@ async function act(cmd) {
     //    Any other failure — DNS, refused, cert — still throws, because those really
     //    did fail and pretending otherwise would be the silent success we avoid.
     try {
-      await page.goto(cmd.goto, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      const resp = await page.goto(cmd.goto, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      // 🔵 Surface the HTTP status. Suggested 2026-09-04 (idifference): a goto to a page
+      //    that 404s still "succeeds" — the tab loads the server's 404 body — and the caller
+      //    has no way to see it without opening the console. We do NOT throw on a 4xx/5xx
+      //    (visiting an error page on purpose is legitimate), but we report it so "a 200
+      //    pretending to be a 404" is visible. `null` means a same-document navigation with
+      //    no response object, which is normal.
+      if (resp) { const s = resp.status(); if (s >= 400) result.httpStatus = s; }
+      // 🔴 goto can RESOLVE (no error, no timeout) and still leave the tab on about:blank —
+      //    playwright reports the navigation as done while the page never actually left.
+      //    Reported 2026-09-04: `goto http://<ip>:3100/ko/home` returned success every time
+      //    but `location.href` stayed about:blank, and it took 20 minutes to find because
+      //    nothing failed. A goto that lands nowhere is the silent success this tool must
+      //    not produce — so check where we actually are and throw if it is not the target.
+      const where = await page.evaluate(() => location.href).catch(() => '');
+      const arrived = where && where !== 'about:blank' && (() => {
+        try { return new URL(where).origin === new URL(cmd.goto).origin; } catch { return false; }
+      })();
+      if (!arrived) {
+        const err = new Error(
+          `goto reported success but the tab is at ${where || 'an unknown url'}, not ${cmd.goto}. `
+          + 'The navigation resolved without leaving the page (seen with http / IP-literal / '
+          + 'non-standard-port targets). This is not a silent success — the page did not load.');
+        err.status = 502;
+        throw err;
+      }
       done.push(`goto ${cmd.goto}`);
     } catch (e) {
       if (!/Timeout .* exceeded/i.test(e.message || '')) throw e;

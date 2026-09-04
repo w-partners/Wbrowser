@@ -110,4 +110,11 @@ if __name__ == "__main__":
     agent = os.environ.get("WIN_AGENT", "").strip()
     if agent:
         cmd["agent"] = agent
+    # 🔴 --tab is parsed in wb (at any position, for every command) and arrives as WIN_TAB.
+    #    Attaching it here means `wb read --tab tk` reaches the named tab instead of silently
+    #    dropping the argument and reading the default tab. `go --tab` already set it in
+    #    build(); an env value wins only if build() did not, so an explicit go --tab is kept.
+    tab = os.environ.get("WIN_TAB", "").strip()
+    if tab and "tab" not in cmd:
+        cmd["tab"] = tab
     print(json.dumps(cmd, ensure_ascii=False))

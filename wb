@@ -185,7 +185,7 @@ for t in ts:
 AGENT_NAME="$(_agent_name)"
 
 _json() {
-  WIN_ACCOUNT_RESOLVED="$ACCOUNT" WIN_AGENT="$AGENT_NAME" \
+  WIN_ACCOUNT_RESOLVED="$ACCOUNT" WIN_AGENT="$AGENT_NAME" WIN_TAB="$TAB" \
     python3 "$DIR/mkcmd.py" "$@"
 }
 
@@ -229,13 +229,23 @@ _engine_why() {
   esac
 }
 
-# Accept --account <hint> at any position. Without an account, the default window.
+# Accept --account <hint> and --tab <name> at ANY position. Without an account, the default
+# window; without a tab, 'main'.
+# 🔴 --tab used to be parsed only inside `go` (in mkcmd), so `wb read --tab tk` silently
+#    dropped both tokens and read the DEFAULT tab — usually an about:blank the agent never
+#    meant to be on. Reported 2026-09-04: 20 minutes lost diagnosing a "dead site" that was
+#    really a blank tab, plus the id label rebound to it. A command whose tab argument
+#    vanishes is exactly the silent failure this tool guards against, so parse it here, for
+#    every command, and hand it to mkcmd via WIN_TAB.
 ACCOUNT="${WIN_ACCOUNT:-}"
+TAB=""
 ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --account|-a) ACCOUNT="${2:-}"; shift 2 || shift ;;
     --account=*)  ACCOUNT="${1#--account=}"; shift ;;
+    --tab)        TAB="${2:-}"; shift 2 || shift ;;
+    --tab=*)      TAB="${1#--tab=}"; shift ;;
     --browser|-b) shift 2 || shift ;;   # already read in the pre-scan above
     --browser=*)  shift ;;
     *) ARGS+=("$1"); shift ;;
