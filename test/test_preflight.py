@@ -72,7 +72,7 @@ def test_every_runnable_entry_point_is_guarded():
     next file added is covered by this test rather than by someone remembering.
     """
     exempt = {"preflight.js"}          # it *is* the check
-    libraries = {"journal.js", "rawcdp.js", "vault.js"}   # required by others, never run directly
+    libraries = {"journal.js", "rawcdp.js", "vault.js", "loginfields.js", "credaudit.js"}   # required by others, never run directly
     missing = []
     for js in sorted(ROOT.glob("*.js")):
         if js.name in exempt or js.name in libraries:
