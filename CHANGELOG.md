@@ -5,6 +5,26 @@ has the detail.
 
 ---
 
+## 0.16.0 — 2026-09-05
+
+### Setup registers wbrowser as an MCP server, so agents *discover* the browser
+
+The skill told an agent HOW to use wbrowser, but an agent still had to think to reach for it —
+and a built-in browser tool sitting in the tool list gets picked first (we caught ourselves
+doing exactly that). Registering wbrowser as an MCP server puts it in that same tool list, next
+to the built-ins, so "I need a logged-in browser" surfaces *this* — whose whole advantage is
+that it drives the Chrome you're already signed into.
+
+`setup.sh` now registers it automatically (`claude mcp add wbrowser -- node …/mcp-server.js`) on
+Claude CLI, and prints the one command to add it on any other agent runtime. It is **local stdio
+only** — no port, no token, no network exposure; only your own agent process can reach it. (The
+separate authenticated HTTP mode for cross-machine use is untouched.) Idempotent, and removable
+with `claude mcp remove wbrowser`.
+
+This is the adoption fix: a clone that installs but that agents never reach for is half-installed.
+
+---
+
 ## 0.15.5 — 2026-09-05
 
 ### `goto` to a page that returns a real HTTP response no longer crashes (TDZ regression)

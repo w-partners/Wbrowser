@@ -204,9 +204,16 @@ curl -fsSL https://raw.githubusercontent.com/w-partners/Wbrowser/main/setup.sh |
 ```
 
 It checks what you have, clones, installs, puts `wb` on your PATH, installs the agent
-skill so your assistant knows the tool exists, registers the engine to start with your
-session (Linux/WSL with systemd), and opens the browser window. Then you log into your
-sites in that window — by hand, as usual — and that is the whole setup.
+skill **and registers wbrowser as an MCP server** so your assistant both knows the tool
+exists and sees it in its tool list (next to any built-in browser tool), registers the
+engine to start with your session (Linux/WSL with systemd), and opens the browser window.
+Then you log into your sites in that window — by hand, as usual — and that is the whole setup.
+
+🔵 The MCP registration is **local stdio** — no port, no token, no network exposure; only
+your own agent process can reach it. (There is a separate authenticated HTTP mode for
+driving it from another machine; that one requires a token and is not set up here.) If you
+use Claude CLI it is registered for you; on any other agent runtime, setup prints the one
+command to add it.
 
 🔵 Each of those is done, not suggested. A step that cannot run says so on screen
 rather than skipping quietly — on WSL without systemd, for instance, it tells you to

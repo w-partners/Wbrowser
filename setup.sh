@@ -224,6 +224,31 @@ else
   warn "skill file missing from this copy -- agents will not know how to drive the browser"
 fi
 
+# -- 4b-2. Register the MCP server so agents can DISCOVER the browser as a tool --------------
+# !! The skill above tells an agent HOW to use wbrowser, but an agent still has to think to
+#    reach for it. Built-in browser tools (e.g. Claude's own in-chrome tool) sit right in the
+#    tool list, so they get picked first -- even by us. Registering wbrowser as an MCP server
+#    puts it in that same list, next to them, so "I need a logged-in browser" surfaces wbrowser
+#    directly. Local stdio only: no port, no token, no network exposure -- only this machine's
+#    agent process can reach it (the remote/http mode, which does need a token, is untouched).
+if command -v claude >/dev/null 2>&1; then
+  say "Registering the MCP server (so agents see the browser as a tool)"
+  # Idempotent: replace any prior registration pointing at this install.
+  claude mcp remove wbrowser >/dev/null 2>&1 || true
+  if claude mcp add wbrowser -- node "$DEST/mcp-server.js" >/dev/null 2>&1; then
+    ok "MCP server 'wbrowser' registered (local stdio → node $DEST/mcp-server.js)"
+    info "agents now see wbrowser in their tool list. Remove with: claude mcp remove wbrowser"
+  else
+    warn "could not register the MCP server automatically"
+    info "add it by hand:  claude mcp add wbrowser -- node $DEST/mcp-server.js"
+  fi
+else
+  # Not a Claude-CLI environment (another agent runtime, or CLI not installed). Tell them how.
+  info "to let an agent discover the browser as a tool, register the MCP server for your agent:"
+  info "  command: node $DEST/mcp-server.js   (local stdio — no token needed)"
+  info "  Claude CLI:  claude mcp add wbrowser -- node $DEST/mcp-server.js"
+fi
+
 # -- 4c. Keep the engine running across reboots -------------------------------
 # !! The engine already survives the terminal that started it, but not a reboot. Without
 #    this, the first session after a restart meets "Engine is not running" and has to
