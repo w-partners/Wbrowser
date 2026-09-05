@@ -165,9 +165,16 @@ en todos esos sitios como tú.** Consulta [Seguridad](#seguridad).
 curl -fsSL https://raw.githubusercontent.com/w-partners/Wbrowser/main/setup.sh | bash
 ```
 
-Comprueba lo que tienes, clona, instala, deja `wb` en tu PATH y abre la ventana del
-navegador. Luego inicias sesión en tus sitios en esa ventana — a mano, como siempre —
-y la instalación está hecha.
+Comprueba lo que tienes, clona, instala, deja `wb` en tu PATH, instala la habilidad del
+agente y **registra wbrowser como servidor MCP** para que tu asistente lo vea en su lista de
+herramientas (junto a cualquier herramienta de navegador integrada), y abre la ventana del
+navegador. Luego inicias sesión en tus sitios en esa ventana — a mano, como siempre — y la
+instalación está hecha.
+
+🔵 El registro MCP es **stdio local** — sin puerto, sin token, sin exposición de red; solo tu
+propio proceso de agente puede alcanzarlo. (Hay un modo HTTP autenticado aparte para manejarlo
+desde otra máquina; ese sí requiere token y no se configura aquí.) Con Claude CLI se registra
+solo; en cualquier otro runtime de agente, la instalación imprime el comando para añadirlo.
 
 <details>
 <summary><b>Windows nativo (PowerShell, sin WSL)</b></summary>

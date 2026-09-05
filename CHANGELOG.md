@@ -5,6 +5,16 @@ has the detail.
 
 ---
 
+## 0.16.1 — 2026-09-05
+
+### Docs: the MCP-registration note is now in all four README languages
+
+0.16.0 described the new MCP auto-registration only in the English README. The Korean, Chinese
+and Spanish READMEs now carry the same paragraph (what setup registers, and that it is local
+stdio — no port, no token, no network exposure). Docs only.
+
+---
+
 ## 0.16.0 — 2026-09-05
 
 ### Setup registers wbrowser as an MCP server, so agents *discover* the browser

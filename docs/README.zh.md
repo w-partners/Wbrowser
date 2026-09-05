@@ -154,8 +154,13 @@ Google 自身      google.com · youtube.com · 你的 Workspace 应用
 curl -fsSL https://raw.githubusercontent.com/w-partners/Wbrowser/main/setup.sh | bash
 ```
 
-它会检查环境、克隆代码、安装依赖、把 `wb` 加到 PATH，并打开浏览器窗口。
-然后你在那个窗口里像平常一样**手动登录**，安装就完成了。
+它会检查环境、克隆代码、安装依赖、把 `wb` 加到 PATH，安装 agent 技能并**把 wbrowser 注册为
+MCP 服务器**，让助手在它的「工具列表」里看到它（和内置浏览器工具并排），然后打开浏览器窗口。
+接着你在那个窗口里像平常一样**手动登录**，安装就完成了。
+
+🔵 MCP 注册是**本地 stdio** ——没有端口、没有令牌、不暴露网络，只有你自己的 agent 进程能访问。
+（另有一个需要令牌的、用于跨机器操控的认证 HTTP 模式，这里不启用。）用 Claude CLI 会自动注册，
+其他 agent 运行时会打印一条添加命令。
 
 <details>
 <summary><b>Windows 原生（PowerShell，不用 WSL）</b></summary>
