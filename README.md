@@ -27,8 +27,9 @@ And it goes the other way: get halfway through something tedious, then hand that
 exact tab over — `./wb take 2` — and the agent carries on from the page you built.
 
 **The AI never sees your password.** Log in by hand and Chrome keeps it, or store it once
-in a local encrypted vault (`wb login`) that the engine — never the AI — reads. Either way
-Wbrowser drives the window that's already open and the model never receives the secret.
+in a local encrypted vault (`wb login`) that the engine — never the AI — reads. The vault is
+AES-256-GCM with a scrypt-derived key, owner-only (0600), on your machine. Either way Wbrowser
+drives the window that's already open and the model never receives the secret.
 
 Runs on **Windows, macOS, Linux and WSL** — each measured on real hardware, on a
 different machine, by someone other than the person who wrote that part:

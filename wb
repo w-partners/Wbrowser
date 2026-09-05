@@ -671,6 +671,33 @@ print('Saved:', '$OUT')
     # never the master's) drives a fixed local task set and prints a score anyone can rerun.
     exec bash "$DIR/scripts/bench.sh"
     ;;
+  remember)
+    # Record which site you use for a kind of task, locally. `wb remember email mail.example.com`
+    # 🔵 Local memory only — never sent to any model. Later `wb recall email` gives it back.
+    _require_engine
+    TAG="${1:-}"; SITE="${2:-}"
+    [ -n "$TAG" ] && [ -n "$SITE" ] || { echo "Usage: wb remember <task-tag> <site>   e.g. wb remember email mail.example.com" >&2; exit 1; }
+    ORIGIN="$(printf '%s' "$SITE" | sed -E 's#^https?://##; s#/.*$##')"
+    curl -s -X POST "$ENGINE/memory/remember" -H 'Content-Type: application/json' \
+      -d "$(WIN_TAG="$TAG" WIN_ORIGIN="$ORIGIN" python3 -c 'import json,os;print(json.dumps({"tag":os.environ["WIN_TAG"],"origin":os.environ["WIN_ORIGIN"]}))')" \
+      | python3 -c "import json,sys; d=json.load(sys.stdin); print('✅ remembered' if d.get('ok') else '❌ '+str(d.get('error')))"
+    ;;
+  recall)
+    # Ask which site you used for a task before. `wb recall email`
+    _require_engine
+    TAG="${1:-}"
+    [ -n "$TAG" ] || { echo "Usage: wb recall <task-tag>   e.g. wb recall email" >&2; exit 1; }
+    curl -s -X POST "$ENGINE/memory/recall" -H 'Content-Type: application/json' \
+      -d "$(WIN_TAG="$TAG" python3 -c 'import json,os;print(json.dumps({"tag":os.environ["WIN_TAG"]}))')" \
+      | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+sites=d.get('sites') or []
+if not sites: print('No site remembered for \"%s\" yet. Store one: wb remember %s <site>' % (d.get('tag'), d.get('tag')))
+else:
+    for s in sites: print('  %-30s (used %d×)' % (s['origin'], s['count']))
+"
+    ;;
   down)
     # 🔴 pkill -f also catches ourselves and the parent shell (if the same string is on their command line).
     #    It actually killed the shell that invoked this script (2026-08-23). Narrow the target.

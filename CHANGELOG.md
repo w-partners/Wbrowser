@@ -5,6 +5,33 @@ has the detail.
 
 ---
 
+## 0.15.0 — 2026-09-05
+
+### `wb remember` / `wb recall` — a local memory of which site is for which task
+
+So you don't have to be told the site every time. Record the site you use for a kind of task,
+recall it later.
+
+```bash
+wb remember email mail.example.com   # "for the 'email' task I use mail.example.com"
+wb recall email                      # → mail.example.com (used 3×)
+```
+
+- 🔵 **Local only.** It lives in `~/.wbrowser/memory.json` (0600) and is **never sent to any
+  model**. It stores only a task tag, the origin, a count and a timestamp — no query-string
+  URLs, no page contents, no cookies. Not a browsing-history dump.
+- 🔴 `wb recall` on an unknown tag returns **nothing** — it never hands back a wrong site.
+- Recall ranks the site you use most for that tag first; the store is capped (LRU) so it cannot
+  grow without bound.
+
+### README: the vault's mechanism is named, not just "encrypted"
+
+The password promise now says *what* the vault is — AES-256-GCM with a scrypt-derived key,
+owner-only (0600), local — in all four languages. "What it is" is verifiable; "encrypted" alone
+is not.
+
+---
+
 ## 0.14.0 — 2026-09-05
 
 ### `wb login` — sign in without exposing the password to the AI (opt-in)

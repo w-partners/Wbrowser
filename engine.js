@@ -25,6 +25,7 @@ const { appendJournal } = require('./journal');
 const vault = require('./vault');
 const loginfields = require('./loginfields');
 const credaudit = require('./credaudit');
+const sitememory = require('./sitememory');
 const os = require('os');
 const path = require('path');
 
@@ -40,6 +41,10 @@ const CRED_AUDIT_FILE = process.env.WBROWSER_CRED_AUDIT
   || path.join(os.homedir(), '.wbrowser', 'creds-audit.log');
 let credPassphrase = null;          // set by /cred/unlock, held for the engine's lifetime
 const credSubmitPolicy = new Map(); // origin -> 'always' | 'never' (remembered after first use)
+
+// --- local site memory (which site an agent used for which task; local-only, never to an LLM)
+const SITE_MEMORY_FILE = process.env.WBROWSER_MEMORY_FILE
+  || path.join(os.homedir(), '.wbrowser', 'memory.json');
 // 🔵 Which browser this engine drives, for the tab label. 1 is the Chrome you were
 //    already in; 2, 3… are the named ones. A tab then reads `[1-2]` — browser 1,
 //    tab 2 — which is how a person refers to it out loud.
@@ -1363,6 +1368,26 @@ const server = http.createServer(async (req, res) => {
         ok: true, filled: true, submitted,
         needsConfirm: !shouldSubmit && !!picked.submit,
       }));
+    }
+    // --- local site memory (which site for which task). Local file only; never sent to an LLM.
+    if (req.method === 'POST' && req.url === '/memory/remember') {
+      const body = JSON.parse((await readBody(req)) || '{}');
+      const { tag, origin } = body;
+      if (!tag || !origin) {
+        res.statusCode = 400; return res.end(JSON.stringify({ error: 'tag and origin are required' }));
+      }
+      const mem = sitememory.remember(sitememory.load(SITE_MEMORY_FILE),
+        { tag, origin, ts: new Date().toISOString() });
+      sitememory.save(SITE_MEMORY_FILE, mem);
+      return res.end(JSON.stringify({ ok: true }));
+    }
+    if (req.method === 'POST' && req.url === '/memory/recall') {
+      const body = JSON.parse((await readBody(req)) || '{}');
+      if (!body.tag) { res.statusCode = 400; return res.end(JSON.stringify({ error: 'tag required' })); }
+      const hits = sitememory.recall(sitememory.load(SITE_MEMORY_FILE), body.tag);
+      // 🔵 Empty is a valid, honest answer — the caller then asks or guesses, never gets a
+      //    wrong site silently.
+      return res.end(JSON.stringify({ ok: true, tag: body.tag, sites: hits }));
     }
     if (req.method === 'GET' && req.url === '/logins') {
       // What we are logged into. 🔴 Never return cookie 'values' — that is a

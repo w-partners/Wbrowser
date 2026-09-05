@@ -284,6 +284,23 @@ wb login example.com --confirm  # …and clicks submit (first time per site need
 - The vault is unlocked once per engine start (the user enters the master passphrase); a
   `wb down; wb up` re-locks it.
 
+## Remembering which site is for which task
+
+A small **local** memory so you don't have to be told the site every time. Record the site you
+use for a kind of task, then recall it later.
+
+```bash
+wb remember email mail.example.com   # "for the 'email' task I use mail.example.com"
+wb recall email                      # → mail.example.com (used 3×)
+```
+
+- 🔵 **Local only.** It lives in `~/.wbrowser/memory.json` (0600) and is **never sent to any
+  model**. It stores only a task tag, the origin, a count and a timestamp — no URLs with query
+  strings, no page contents, no cookies.
+- 🔴 `wb recall` on an unknown tag returns **nothing** — it never hands you a wrong site. Ask or
+  store one; do not guess.
+- Recall ranks the site you use most for that tag first.
+
 ## Scheduled runs
 
 ```bash

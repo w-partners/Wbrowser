@@ -99,8 +99,9 @@ en todas partes.
 ```
 
 **Wbrowser nunca ve tus contraseñas.** Tú las escribes — en Chrome, o una vez en una bóveda
-local cifrada que lee el motor (`wb login`, opcional). En cualquier caso la IA nunca las
-recibe; Wbrowser solo controla la ventana que ya está abierta.
+local cifrada que lee el motor (`wb login`, opcional; AES-256-GCM con clave derivada por
+scrypt, solo lectura del propietario 0600). En cualquier caso la IA nunca las recibe;
+Wbrowser solo controla la ventana que ya está abierta.
 
 ---
 
