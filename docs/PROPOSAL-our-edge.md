@@ -23,14 +23,21 @@ Two things fall out of that, and only that:
 
 ## Say it as a thesis, not a feature list
 
-The sharp version — for whitegun to accept, sharpen, or reject:
+The sharp version — for the master to accept, sharpen, or reject:
 
-> **Every other AI browser asks you to switch browsers. This one doesn't — it drives the one
-> you're already in.**
+> **The AI browsers you've heard of — Aside, Comet, Dia — ask you to switch browsers. This one
+> doesn't. It drives the one you're already in.**
 
-The proof is a thing the competitor's screenshot *can't* show: a human cursor and an agent
-working in the same window at once. (That is also the demo we have not recorded yet — see the
-handoff notes — precisely because it needs a clean profile so no real login is on screen.)
+🔴 Note the wording change: an earlier draft said *"Every other AI browser"*. That is a
+universal claim that one counter-example sinks — we verified three, not all of them (whitegun's
+point, 2026-09-05). Name the ones we checked, or say "the ones you've heard of"; do not claim
+"every".
+
+The proof is our own picture, shown — a human cursor and an agent working in the same window at
+once. 🔵 Do NOT lean on "the competitor's screenshot can't show this": an absence is a weak
+proof ("they just didn't screenshot it"). Our recorded demo *showing* the shared window is the
+strong form — and it is the demo we have not recorded yet (it needs a clean profile so no real
+login is on screen, which needs the master's go-ahead).
 
 ## The honest constraint (do not drop it)
 
