@@ -71,6 +71,14 @@ Launches a headless Chrome on **its own profile and its own two ports** (9444 an
 minute. It never touches the browser you are signed into, logs into nothing, and
 leaves nothing behind but a throwaway profile directory.
 
+### The benchmark: `wb bench` (or `bash scripts/bench.sh`)
+
+A **reproducible** capability score, on the same throwaway-Chrome pattern (its own
+profile and ports, 9445/7985 — never your browser). It serves a fixed local task
+set and prints `score: N/M`. Rerun it and you get the same number — which is the
+point: it is a floor of capability you can verify, not a claim against live-web
+benchmarks that cannot be reproduced. See `bench/README.md`.
+
 ```
 ok   health says the browser is attached
 ok   goto example.com lands

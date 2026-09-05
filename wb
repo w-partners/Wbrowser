@@ -666,6 +666,11 @@ print('Saved:', '$OUT')
     WBROWSER_ENGINE="$ENGINE" WB_ORIGIN="$ORIGIN" WB_SAVE="$SAVE" WB_CONFIRM="$CONFIRM" \
       WB_AGENT="$AGENT_NAME" python3 "$DIR/credlogin.py"
     ;;
+  bench)
+    # Run the reproducible benchmark: a throwaway headless Chrome (its own profile and ports,
+    # never the master's) drives a fixed local task set and prints a score anyone can rerun.
+    exec bash "$DIR/scripts/bench.sh"
+    ;;
   down)
     # 🔴 pkill -f also catches ourselves and the parent shell (if the same string is on their command line).
     #    It actually killed the shell that invoked this script (2026-08-23). Narrow the target.
