@@ -5,6 +5,18 @@ has the detail.
 
 ---
 
+## 0.15.2 — 2026-09-05
+
+### Docs: how to close Chrome on WSL when a restart is needed
+
+`wb` never kills Chrome (it may be a window you're using), so when a utility-world buildup
+finally needs a Chrome restart, you close it yourself — and on WSL `powershell.exe` / `taskkill`
+may not be on the path if interop isn't configured (reported by a peer). The SKILL now gives the
+portable way: send `Browser.close` over the CDP browser websocket, which works wherever the
+debugging port does. Docs only.
+
+---
+
 ## 0.15.1 — 2026-09-05
 
 ### One place decides what counts as a sensitive action

@@ -120,6 +120,13 @@ Chrome restarts) and only a Chrome restart clears those. Do not retry either way
 attempt adds another world. This piles up fastest from repeated reconnects (many restart
 cycles, or `kill -9` on the engine), not from normal use.
 
+🔵 **Closing Chrome on WSL:** `wb` never kills Chrome itself (it may be a window you're using).
+When you do need to restart it, `powershell.exe`/`taskkill` may not be on the path if WSL interop
+isn't configured (reported 2026-09-05). The portable way is the CDP browser endpoint, which works
+wherever the debugging port does: open a websocket to the `webSocketDebuggerUrl` from
+`curl http://127.0.0.1:9222/json/version` and send `{"id":1,"method":"Browser.close"}`. Then
+`wb up` starts a fresh Chrome (and clears the utility-world buildup).
+
 **Which layer is it?** These look alike from the outside but want different fixes. You do
 not need to hand-write raw CDP — `wb status` already probes CDP and the engine, so read it
 together with a `wb read`: `❌ Chrome`/`❌ Engine` → layer 1; `✅ Chrome` but you cannot
