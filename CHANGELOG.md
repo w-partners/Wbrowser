@@ -5,6 +5,22 @@ has the detail.
 
 ---
 
+## 0.13.11 — 2026-09-05
+
+### The fallback's refusal no longer loops you into an impossible retry
+
+0.13.8's isolation refusal ("no tab stamped for '<agent>'…") ended with *"or open this agent's
+tab first with a `go`."* But on the raw-CDP fallback, `go` routes through the **same** check and
+is refused identically — so the guidance looped, and following it just reprinted the message. A
+peer burned time trying it before realizing the second option was impossible from that state.
+
+The fallback genuinely cannot open a new tab (that needs playwright, which is exactly what is
+down on the fallback), so the message now says the one thing that works — restart the engine,
+and if it comes back on the fallback, a utility-world buildup is holding playwright down and
+only a Chrome restart clears it (with the master's OK). No option that cannot be done from here.
+
+---
+
 ## 0.13.10 — 2026-09-05
 
 ### `connect` can no longer hang forever — a stuck attach becomes a named error

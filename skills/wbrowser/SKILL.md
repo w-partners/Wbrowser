@@ -167,8 +167,11 @@ engine when you can.
 live tab of its own, the fallback **refuses** with `no tab stamped for '<agent>' … refusing
 to attach to another agent's tab` — it will not borrow a stranger's tab, even the only live
 one. (Before 0.13.8 it could, under load: a slow own-tab made `eval`/`shot` fall through to
-another agent's logged-in page. Fixed.) If you hit that refusal, restart the engine
-(`wb down; wb up`) or open your tab first with a `go` carrying `--agent <you>`.
+another agent's logged-in page. Fixed.) If you hit that refusal, **restart the engine**
+(`wb down; wb up`) — that is the only fix from here. Do **not** try to `go` your way out of it:
+on the fallback, `go` needs a stamped tab too and just reprints the same refusal (a loop). If
+the engine comes back still on the fallback, a utility-world buildup is holding playwright down
+and only a Chrome restart clears it (get the master's OK).
 
 🔵 If your own tab's **renderer** has hung (its `Page`/`Runtime` time out while `/json/list`
 still answers — a long-reused tab can reach this), the fallback **closes that tab for you** and

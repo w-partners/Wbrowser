@@ -51,11 +51,21 @@ function chooseCandidates(pages, match) {
   if (!match) return pages;
   const stamped = pages.filter((t) => (t.title || '').includes(match));
   if (!stamped.length) {
+    // 🔴 Do NOT suggest "open a tab with go" here. On this fallback lane `go` routes through
+    //    raw CDP too and lands right back in this same check — the guidance would loop, and a
+    //    peer burned time trying it (reported 2026-09-05, whitegun). The fallback genuinely
+    //    cannot open a new tab: that needs playwright, which is exactly what is down. So the
+    //    only real fix is to restore playwright — restart the engine (and, if a utility-world
+    //    buildup is what took it down, Chrome, with the master's OK). Say that, and nothing
+    //    that cannot be done from here.
     throw new Error(
       `rawcdp: no tab stamped for '${match}'. The engine is on the raw-CDP fallback (its `
       + `playwright connection is down) and this agent has no live tab of its own to drive. `
-      + `Refusing to attach to another agent's tab. Restart the engine (wb down; wb up), or `
-      + `open this agent's tab first with a go that carries --agent ${match}.`);
+      + `Refusing to attach to another agent's tab. On this fallback a new tab cannot be `
+      + `opened (that needs playwright), so restart the engine — "wb down; wb up" — to `
+      + `restore it; if it comes back on the fallback again, a utility-world buildup is `
+      + `holding playwright down and only a Chrome restart clears it (get the master's OK, `
+      + `it may be their window).`);
   }
   return stamped;
 }

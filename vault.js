@@ -74,4 +74,55 @@ function decrypt(envelope, passphrase) {
   return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8');
 }
 
-module.exports = { encrypt, decrypt, VERSION };
+// ---------------------------------------------------------------- file + payload helpers
+//
+// A vault file is the JSON envelope on disk. The decrypted payload is a JSON object:
+//   { sites: { "<origin>": { username, password, submitPolicy } } }
+// These helpers keep the shape in one place; the engine holds the derived key and calls them.
+// 🔴 loadPayload/savePayload move the CLEARTEXT payload only inside the engine — never to the
+//    CLI/model. They still never log.
+
+const fs = require('fs');
+
+function readVaultFile(file) {
+  const raw = fs.readFileSync(file, 'utf8');
+  const env = JSON.parse(raw);
+  if (!env || env.v !== VERSION) throw new Error('vault: file is not a v1 vault');
+  return env;
+}
+
+function writeVaultFile(file, envelope) {
+  // 0600 — owner read/write only. A credential store must not be world/group readable.
+  fs.writeFileSync(file, JSON.stringify(envelope), { mode: 0o600 });
+  try { fs.chmodSync(file, 0o600); } catch { /* best effort on filesystems without modes */ }
+}
+
+// Decrypt a vault file into its payload object. Returns an empty payload if the file does not
+// exist yet (first enroll). Throws on a wrong passphrase / tampering (never returns garbage).
+function loadPayload(file, passphrase) {
+  let env;
+  try {
+    env = readVaultFile(file);
+  } catch (e) {
+    if (e.code === 'ENOENT') return { sites: {} };
+    throw e;
+  }
+  const json = decrypt(env, passphrase);
+  const payload = JSON.parse(json);
+  if (!payload || typeof payload !== 'object' || typeof payload.sites !== 'object') {
+    throw new Error('vault: decrypted payload has the wrong shape');
+  }
+  return payload;
+}
+
+function savePayload(file, payload, passphrase) {
+  if (!payload || typeof payload.sites !== 'object') {
+    throw new Error('vault: payload must be { sites: {...} }');
+  }
+  writeVaultFile(file, encrypt(JSON.stringify(payload), passphrase));
+}
+
+module.exports = {
+  encrypt, decrypt, VERSION,
+  readVaultFile, writeVaultFile, loadPayload, savePayload,
+};

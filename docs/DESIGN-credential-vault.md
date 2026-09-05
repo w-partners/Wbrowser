@@ -67,15 +67,17 @@ zeroed. It is never written back in the clear and never returned by any endpoint
 4. Audit line: `autologin <origin> field=password at <ts>` (no value).
 5. Memory holding the decrypted value is cleared.
 
-## Open questions (for the user / a security review before code)
+## Decisions (confirmed by the user 2026-09-05)
 
-- **Master passphrase unlock cadence:** once per engine start (simplest) vs OS keychain unlock
-  vs per-use. Once-per-start is the default proposal.
-- **Submit gating default:** always-confirm vs per-site allow. Proposal: confirm on first use
-  per site, then remember the user's choice.
-- **Field detection failure:** if we cannot confidently find the password field, we must
-  **refuse and say so**, never type a secret into the wrong field. (Same "refuse, don't guess"
-  rule as the tab-isolation work.)
+- **Master passphrase unlock cadence: once per engine start.** The user enters the passphrase
+  once on the controlling terminal at the first credential use after `wb up`; the engine holds
+  the derived key in memory for the engine's lifetime. Restarting the engine re-locks.
+- **Submit gating: confirm on the first login per site, then remember the choice.** The engine
+  fills the fields always; the final submit waits for the user's confirmation the first time a
+  site is used, then follows the remembered per-site policy.
+- **Field detection failure: refuse and say so.** If we cannot confidently identify the
+  password field, we do NOT type the secret anywhere — same "refuse, don't guess" rule as the
+  tab-isolation work. A wrong-field secret leak is the worst outcome and is designed out.
 
 ## Test plan
 

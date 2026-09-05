@@ -4,7 +4,11 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 
-const { encrypt, decrypt } = require('../vault.js');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+
+const { encrypt, decrypt, loadPayload, savePayload } = require('../vault.js');
 
 const SECRET = 'hunter2-🔒-correct horse battery staple';
 const PASS = 'a strong master passphrase';
@@ -59,4 +63,44 @@ test('an empty passphrase is refused', () => {
 
 test('a non-string plaintext is refused', () => {
   assert.throws(() => encrypt({ user: 'x', pass: 'y' }, PASS));
+});
+
+// ---------------------------------------------------------------- file + payload layer
+
+function tmpVault() {
+  return path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wbvault-')), 'creds.enc');
+}
+
+test('a missing vault file loads as an empty payload (first enroll)', () => {
+  const payload = loadPayload(tmpVault(), PASS);
+  assert.deepEqual(payload, { sites: {} });
+});
+
+test('a payload round-trips through disk', () => {
+  const file = tmpVault();
+  const payload = { sites: { 'example.com': { username: 'me', password: SECRET, submitPolicy: 'confirm' } } };
+  savePayload(file, payload, PASS);
+  assert.deepEqual(loadPayload(file, PASS), payload);
+});
+
+test('the wrong passphrase cannot load a saved payload', () => {
+  const file = tmpVault();
+  savePayload(file, { sites: { a: { username: 'x', password: 'y' } } }, PASS);
+  assert.throws(() => loadPayload(file, 'wrong'));
+});
+
+test('the secret is not present in the file bytes on disk', () => {
+  const file = tmpVault();
+  savePayload(file, { sites: { s: { username: 'u', password: SECRET } } }, PASS);
+  const bytes = fs.readFileSync(file, 'utf8');
+  assert.ok(!bytes.includes(SECRET), 'secret leaked to disk in the clear');
+  assert.ok(!bytes.includes('battery staple'), 'secret fragment leaked to disk');
+});
+
+test('the vault file is written owner-only (0600)', () => {
+  if (process.platform === 'win32') return;   // POSIX modes only
+  const file = tmpVault();
+  savePayload(file, { sites: {} }, PASS);
+  const mode = fs.statSync(file).mode & 0o777;
+  assert.equal(mode, 0o600, `expected 0600, got ${mode.toString(8)}`);
 });

@@ -41,6 +41,23 @@ test('no tab for this agent → throws, does NOT fall back to others', () => {
     /no tab stamped for 'idifference-primary'.*Refusing to attach to another agent's tab/s);
 });
 
+test('the refusal does NOT tell you to open a tab with go (that loops on the fallback)', () => {
+  // 🔴 Reported 2026-09-05 (whitegun): the message used to say "open this agent's tab first
+  //    with a go", but on the fallback lane `go` routes back through this very check and is
+  //    refused identically — the guidance looped and cost real time. The only real fix here
+  //    is a restart, so the message must say that and must NOT suggest `go`.
+  const strangersOnly = pages.filter((t) => !/idifference/.test(t.title));
+  try {
+    chooseCandidates(strangersOnly, 'idifference-primary');
+    assert.fail('should have thrown');
+  } catch (e) {
+    assert.ok(!/\bgo\b/.test(e.message) || !/carries --agent|open this agent's tab first/.test(e.message),
+      'the refusal still suggests opening a tab with go — that loops on the fallback');
+    assert.match(e.message, /restart the engine|wb down; wb up/i,
+      'the refusal must point at the one fix that works here: a restart');
+  }
+});
+
 test('without a name, every page is a candidate (no identity to protect)', () => {
   const got = chooseCandidates(pages, null);
   assert.equal(got.length, pages.length);
