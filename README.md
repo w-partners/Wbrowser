@@ -26,8 +26,9 @@ driving, so you can always tell at a glance — recorded in a signed-out profile
 And it goes the other way: get halfway through something tedious, then hand that
 exact tab over — `./wb take 2` — and the agent carries on from the page you built.
 
-**Your password never leaves you.** You log in by hand; Chrome keeps it; Wbrowser only
-drives the window that's already open.
+**The AI never sees your password.** Log in by hand and Chrome keeps it, or store it once
+in a local encrypted vault (`wb login`) that the engine — never the AI — reads. Either way
+Wbrowser drives the window that's already open and the model never receives the secret.
 
 Runs on **Windows, macOS, Linux and WSL** — each measured on real hardware, on a
 different machine, by someone other than the person who wrote that part:
@@ -113,8 +114,9 @@ logged in, everywhere.
 ./wb click '#compose'              # clicks it
 ```
 
-**Wbrowser never sees your passwords.** You type them; Chrome stores them; Wbrowser
-just drives the window that's already open.
+**Wbrowser never sees your passwords.** You type them — into Chrome, or once into a local
+encrypted vault the engine reads (`wb login`, opt-in). Either way the AI never receives them;
+Wbrowser just drives the window that's already open.
 
 ---
 
@@ -172,8 +174,9 @@ one of those sites.** See [Security](#security).
 
 ### What it won't do
 
-- **Ask for or store your password.** You sign in; Chrome keeps it; Wbrowser drives
-  the window that's already open. `type` never logs what was typed.
+- **Expose your password to the AI.** You sign in by hand, or store it once in a local
+  encrypted vault only the engine can read (`wb login`, opt-in) — the model never receives
+  it either way. `type` never logs what was typed.
 - **Print cookie values.** Not in output, not in logs — cookies *are* the login.
 - **Guess which account you meant.** Name an account that isn't open and it fails.
   Sending mail from the wrong account is worse than an error message.

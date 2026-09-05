@@ -5,6 +5,44 @@ has the detail.
 
 ---
 
+## 0.14.0 — 2026-09-05
+
+### `wb login` — sign in without exposing the password to the AI (opt-in)
+
+New, **opt-in** capability. When a site is not already signed in you normally stop — you cannot
+type the user's password and should not. `wb login` closes that: the user stores a credential
+once, and the engine fills the login form. **The AI never sees the password.** The user enters
+it; it is encrypted into a local vault (scrypt + AES-256-GCM, `~/.wbrowser/creds.enc`, 0600);
+the engine decrypts per-use and types it into the field over CDP — the value never crosses into
+the agent's context, the logs, or the audit trail.
+
+```bash
+wb login example.com --save     # the USER types username + password (echo off) → encrypted vault
+wb login example.com            # the engine unlocks the vault and fills the login form
+wb login example.com --confirm  # …and submits (first time per site; then remembered)
+```
+
+- The engine **refuses** rather than guess: no visible password field, or two (a change-password
+  form), and it types nothing. A secret in the wrong field is designed out.
+- Submit is gated (first login per site needs `--confirm`, then remembered). Every use is
+  audited — site, action, when, username masked — **never the value**. The vault unlocks once
+  per engine start; `wb down; wb up` re-locks.
+
+🔴 **The password promise is reworded, not walked back.** Earlier releases said Wbrowser would
+"never store your password". `wb login` stores it — encrypted, AI-invisible, and only if you opt
+in per site. The invariant that never changed, and is now the promise, is **the AI never sees
+the secret** — true whether you log in by hand or use the vault. The default is unchanged: store
+nothing unless you run `wb login --save`. Before 0.14.0 there was no credential storage at all.
+
+### `wb bench` — a reproducible capability benchmark
+
+`wb bench` launches a throwaway headless Chrome on its own profile and ports (never the browser
+you use), serves a fixed local task set, and prints `score: N/M`. Rerun it and you get the same
+number — a floor of capability you can verify, not a claim against live-web benchmarks that
+cannot be reproduced.
+
+---
+
 ## 0.13.11 — 2026-09-05
 
 ### The fallback's refusal no longer loops you into an impossible retry

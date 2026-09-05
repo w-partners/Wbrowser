@@ -92,8 +92,9 @@ Wbrowser 反过来做：**你亲手登录一次**，之后终端（或 AI 助手
 ./wb click '#compose'              # 点击它
 ```
 
-**Wbrowser 永远看不到你的密码。** 你输入，Chrome 保存，Wbrowser 只是操控那个已经
-打开的窗口。
+**Wbrowser 永远看不到你的密码。** 你输入——输入到 Chrome，或者输入一次到引擎读取的
+本地加密保险库（`wb login`，可选启用）。无论哪种方式，AI 都不会拿到密码；Wbrowser 只是
+操控那个已经打开的窗口。
 
 ---
 

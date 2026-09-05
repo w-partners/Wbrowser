@@ -98,8 +98,9 @@ en todas partes.
 ./wb click '#compose'              # hace clic
 ```
 
-**Wbrowser nunca ve tus contraseñas.** Tú las escribes, Chrome las guarda, y Wbrowser
-solo controla la ventana que ya está abierta.
+**Wbrowser nunca ve tus contraseñas.** Tú las escribes — en Chrome, o una vez en una bóveda
+local cifrada que lee el motor (`wb login`, opcional). En cualquier caso la IA nunca las
+recibe; Wbrowser solo controla la ventana que ya está abierta.
 
 ---
 
