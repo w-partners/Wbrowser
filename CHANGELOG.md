@@ -5,6 +5,28 @@ has the detail.
 
 ---
 
+## 0.15.4 — 2026-09-05
+
+### A command with a tab name that was never opened now errors, instead of reading a blank tab
+
+Reported 2026-09-05 (idifference): `goto` (no tab name → 'main') followed by an `eval {tab:"login"}`
+hit two different tabs — tabs are keyed by `(agent, tab)` — and the `eval` quietly read
+`about:blank` while `goto` had reported success. The navigation worked; the second command was
+just looking at a different, empty tab, and nothing said so.
+
+Now a command that does **not** navigate (`eval`/`read`/`click`/`press`/`type` with no `goto`)
+refuses to conjure a blank tab: if no page exists for that `(agent, tab)` yet, it returns a 404
+naming the tab and the fix — *"no page for tab 'login' … use the same tab name on your 'go', or
+send 'go' first"* — rather than opening a blank one and acting on it. `goto`/`newtab` still open
+their tab as before. Use the same tab name on the `go` and on later commands, or bundle them in
+one call.
+
+🔵 Known separate issue (not this fix): the e2e check "the tab is labelled with the agent" is
+flaky on some runs — it predates this change (verified) and is being looked at on its own; it is
+a stamp-title timing question, not the routing fixed here.
+
+---
+
 ## 0.15.3 — 2026-09-05
 
 ### Docs: closing Chrome ends OTHER agents' tabs too, not just yours

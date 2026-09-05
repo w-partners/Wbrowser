@@ -222,6 +222,14 @@ wb go https://B --tab right           # another named 'right'
 wb --tab left read                    # later commands reach the same tab by name
 ```
 
+🔴 **Use the SAME tab name on the `go` and on every later command for that page.** Tabs are
+keyed by `(agent, tab)`, so `go https://A` (no name → 'main') and a later `read --tab left`
+are **different tabs** — the `read` lands on a fresh, empty 'left' tab, not on A. Since 0.15.4
+that mismatch is refused with `no page for tab 'left' … send 'go' first` instead of silently
+returning about:blank (reported 2026-09-05); either name both, or name neither. When in doubt,
+put the whole sequence in one call — `wb go URL --tab left` then `wb --tab left read`, or bundle
+`go`+`read` together — so the page and the action share one tab.
+
 Add `--window` to split a tab off into its **own OS window** — same Chrome, same
 control (it is one CDP connection either way), just laid out separately so you can
 watch two pages at once:

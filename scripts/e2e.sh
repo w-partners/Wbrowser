@@ -268,6 +268,15 @@ check "goto recovers a page that never completes" "$R" \
 check "and the recovered page is usable"          "$R" "d.get('page',{}).get('h1') == 'Slow Page'"
 check "and the rest of the command still ran"     "$R" "d.get('page',{}).get('text')"
 
+# 🔴 Silent-failure guard (reported 2026-09-05, idifference): an eval/read with a tab name that
+#    was never opened used to conjure a blank tab and return about:blank with no error. A command
+#    that does not navigate must refuse rather than act on a page it just made up.
+E=$(act '{"eval":"location.href","agent":"'"$AGENT"'","tab":"never-opened-'"$$"'"}')
+check "eval on an unopened tab errors, not silent blank" "$E" \
+  "'no page for tab' in (d.get('error') or '')"
+check "and the error names the tab and the fix"          "$E" \
+  "\"never-opened-\" in (d.get('error') or '') and \"go\" in (d.get('error') or '')"
+
 # 🔵 By port, never by name.
 slow_pid=$(ss -ltnp 2>/dev/null | grep ":$PORT_SLOW " | grep -oP 'pid=\K[0-9]+' | head -1)
 [ -n "${slow_pid:-}" ] && kill "$slow_pid" 2>/dev/null

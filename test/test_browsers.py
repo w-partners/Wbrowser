@@ -99,8 +99,12 @@ def test_newtab_does_not_open_a_second_orphan_page():
     #    overwrote the map entry, orphaning the first as a mark-less about:blank. That blank
     #    is exactly what piled a session up to 30+ tabs. getTab must be skipped when newtab
     #    (or newwindow) is set, since those open their own page.
+    import re
     src = (ROOT / "engine.js").read_text()
-    assert "(cmd.newtab || cmd.newwindow) ? null : await getTab" in src, \
+    # The behaviour, checked without pinning the exact line formatting: when newtab/newwindow
+    # is set, page is null (getTab is skipped); otherwise getTab runs. Match across whitespace
+    # so adding an argument or wrapping the line does not falsely fail (2026-09-05).
+    assert re.search(r"\(cmd\.newtab\s*\|\|\s*cmd\.newwindow\)\s*\?\s*null\s*:\s*await getTab", src, re.S), \
         "getTab still runs alongside newtab/newwindow — orphan page returns"
 
 

@@ -371,7 +371,7 @@ async function titleOf(page) {
   } catch { return ''; }
 }
 
-async function getTab(name, accountHint, strict, agent) {
+async function getTab(name, accountHint, strict, agent, mustExist = false) {
   await connect();
   const tabName = name || 'main';
   // 🔵 Partition tabs per agent — if I overwrite a tab another agent was using,
@@ -459,6 +459,22 @@ async function getTab(name, accountHint, strict, agent) {
   //    30-40 open tabs in a short sitting, which wastes memory and, via the per-tab
   //    utility world, slows every later connect. Requested by the master 2026-09-04
   //    ("it keeps opening tabs").
+  // 🔴 We are about to OPEN a fresh (about:blank) tab because none matched this key. That is
+  //    right for a goto/newtab (they immediately navigate it). But a command with NO navigation
+  //    — eval/read/click/press/type — that lands here would run on a blank page and return an
+  //    empty result with no error: the silent failure reported 2026-09-05 (idifference), where
+  //    a `goto` with no tab name and an `eval {tab:"login"}` hit two different keys, and the
+  //    eval quietly read about:blank. So when the caller says a page must already exist, refuse
+  //    to conjure a blank one and say which tab is empty.
+  if (mustExist) {
+    const err = new Error(
+      `no page for tab '${tabName}'${agent ? ` (agent '${agent}')` : ''} — this command does `
+      + `not open a page, so there is nothing to act on. A tab exists only after a 'go' opened `
+      + `it; opening a blank one and running on it would silently return nothing. Use the same `
+      + `tab name on your 'go' and this command, or send 'go' first.`);
+    err.status = 404;
+    throw err;
+  }
   await reapAgentTabs(targetCtx);
   // 🔵 The session is shared, so a new tab is already logged in — that was the real point
   //    of inheriting, and opening a tab keeps it. What is lost is only that the agent
@@ -846,7 +862,14 @@ async function act(cmd) {
   //    leaving an orphan about:blank behind on every call. Measured 2026-09-04: {newtab,
   //    goto} added TWO tabs per call, one of them a mark-less blank the reaper could not
   //    see, which is how a session reached 30+ open tabs. Let the block below make the page.
-  let page = (cmd.newtab || cmd.newwindow) ? null : await getTab(tab, acct, explicit, cmd.agent);
+  // 🔴 A command that opens a page (goto) may create the tab; one that does not (eval/read/
+  //    click/press/type alone) must NOT — otherwise it runs on a freshly-opened about:blank and
+  //    returns nothing, silently (idifference 2026-09-05). So require the tab to already exist
+  //    unless this command navigates.
+  const opensPage = !!cmd.goto;
+  let page = (cmd.newtab || cmd.newwindow)
+    ? null
+    : await getTab(tab, acct, explicit, cmd.agent, !opensPage);
   const done = [];
 
   if (cmd.newtab) {
