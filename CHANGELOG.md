@@ -5,6 +5,28 @@ has the detail.
 
 ---
 
+## 0.13.10 — 2026-09-05
+
+### `connect` can no longer hang forever — a stuck attach becomes a named error
+
+`connectOverCDP`'s own `timeout` option only covers opening the websocket. After it connects,
+playwright replays one `executionContextCreated` per stale utility world before it returns —
+and **that** phase is not bounded by the option. With enough worlds it never returns. Because
+the engine calls `connect()` from inside `/health`, `/health` then never answers either: the
+port is held, the process is alive, and every probe times out with **no cause given**. (Reported
+2026-09-05, idifference: `wb up` hung for over three minutes after a reconnect; the log's last
+line was the reconnect attempt, then silence. A hang that says nothing is worse than a failure
+that does.)
+
+`connectOverCDP` is now wrapped in a wall-clock race that fires even when the built-in timeout
+does not (`WBROWSER_CONNECT_TIMEOUT`, default 30000 — the same "hung, not slow" line the docs
+tell you to use). When it trips, the attach becomes a named error naming the real cause (utility-
+world buildup, cleared only by a Chrome restart) instead of an unbounded silence. The one-shot
+reconnect is bounded by the same race, so the reconnect recursion can no longer hang forever —
+which was the exact shape of this report.
+
+---
+
 ## 0.13.9 — 2026-09-05
 
 ### A hung tab is dropped and you're told to retry — not left stuck behind a Chrome restart

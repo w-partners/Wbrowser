@@ -42,6 +42,36 @@ function nextTabId() { tabSeq += 1; return tabSeq; }
 const CDP = process.env.WBROWSER_CDP
   || `http://127.0.0.1:${process.env.WBROWSER_CDP_PORT || 9222}`;
 
+// 🔴 connectOverCDP's own `timeout` only covers opening the websocket. Once connected,
+//    playwright replays one `executionContextCreated` per stale utility world before it
+//    returns — and THAT phase is not bounded by the option. With enough worlds it never
+//    returns, and because the engine calls connect() from inside /health, /health then
+//    never answers: the port is held, the process is alive, and every probe times out with
+//    no cause given (reported 2026-09-05, idifference: `wb up` hung >3min after a reconnect,
+//    the log's last line was the reconnect attempt, then silence). A hang that says nothing
+//    is worse than a failure that does. So bound the WHOLE call with a wall-clock race that
+//    fires even when the built-in timeout does not, and turn the hang into a named error.
+//    Tunable, defaulting to the 30s line we tell people to use as "hung, not slow".
+const CONNECT_TIMEOUT = Number(process.env.WBROWSER_CONNECT_TIMEOUT || 30000);
+async function connectOverCDPBounded() {
+  let timer;
+  const hardStop = new Promise((_, rej) => {
+    timer = setTimeout(() => rej(new Error(
+      `connectOverCDP did not return within ${CONNECT_TIMEOUT}ms — its own timeout does not `
+      + `cover replaying stale execution contexts, so a large buildup hangs it here. This is `
+      + `the "hung, not slow" case: only a Chrome restart clears the buildup (the worlds live `
+      + `in Chrome's memory), and it may be the master's window, so get the master's OK first.`)),
+      CONNECT_TIMEOUT);
+  });
+  try {
+    // Keep playwright's own (shorter) timeout too — a clean "websocket won't open" still
+    // fails fast with its own message; the race only backstops the unbounded replay phase.
+    return await Promise.race([chromium.connectOverCDP(CDP, { timeout: 10000 }), hardStop]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 let browser = null;
 let ctx = null;
 const tabs = new Map();          // name -> page
@@ -69,7 +99,7 @@ let reconnecting = false;
 async function connect(_reconnecting) {
   if (browser && browser.isConnected()) { reconnectFailed = false; return; }
   try {
-    browser = await chromium.connectOverCDP(CDP, { timeout: 10000 });
+    browser = await connectOverCDPBounded();
   } catch (e) {
     // 🔴 A connect timeout here usually is not a dead Chrome. Say what it actually is,
     //    because the raw message sends people to restart a browser that is working fine.
@@ -83,7 +113,12 @@ async function connect(_reconnecting) {
     //    Only restarting Chrome clears them — the worlds live in its memory. Playwright
     //    will not report them, so if we do not name it here nobody can find it: every
     //    other check (HTTP, websocket, /json/list, Chrome's own "Responding") passes.
-    if (/Timeout .* exceeded/i.test(e.message || '')) {
+    // Both the built-in "Timeout N ms exceeded" and our own wall-clock backstop ("did not
+    // return within Nms") land here: Chrome may be answering raw CDP while the attach hangs,
+    // and the response is the same — one reconnect to tell a half-dead socket from world
+    // buildup. The recursive connect(true) below is bounded by the same backstop, so a second
+    // hang now fails fast instead of hanging forever (the original bug: reported 2026-09-05).
+    if (/Timeout .* exceeded/i.test(e.message || '') || /did not return within/.test(e.message || '')) {
       let reachable = false;
       try {
         const r = await fetch(`${CDP}/json/version`, { signal: AbortSignal.timeout(2000) });

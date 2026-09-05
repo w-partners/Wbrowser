@@ -133,6 +133,13 @@ The order and the layers (method from a peer's field notes, 2026-09-04):
    🔴 **HTTP 000 is two different things**: an *instant* refusal (0–6ms — no socket, waiting
    won't change it) vs a *timeout* (a slow engine cut off — raise `WB_HEALTH_TIMEOUT` and
    measure once more before calling it dead; a 10.9s /health has been misread as dead).
+   🔵 **A special case: the port is held (a live PID) but `/health` never answers, even for
+   30s+.** That is not "slow" — the engine is *stuck* attaching, because `connectOverCDP`
+   hangs replaying stale execution contexts (its own timeout does not cover that phase). Since
+   0.13.10 the engine bounds this itself and turns it into a named error (utility-world
+   buildup — restart Chrome, with the master's OK); before, it just sat silent. Raise
+   `WBROWSER_CONNECT_TIMEOUT` if 30s is genuinely too short for your box, but a multi-minute
+   hang means buildup, not slowness.
 2. **Does raw CDP answer?** If `/json/version` does not respond, the fault is in Chrome
    (utility-world buildup) — only a Chrome restart clears it.
 3. **Does raw CDP answer but playwright does not?** Then it is the *engine's* connection —
