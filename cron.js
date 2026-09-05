@@ -36,15 +36,16 @@ require('./preflight').requireInstalled();
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
+const { classify } = require('./sensitiveaction');
 
 const ENGINE = process.env.WBROWSER_ENGINE || 'http://127.0.0.1:7981';
 const JOBS_DIR = process.env.WBROWSER_JOBS || path.join(__dirname, 'jobs');
 const AGENT = process.env.WBROWSER_AGENT || 'cron';
 
-// 🔴 Selectors/text that look like submit, pay or delete. Blocked by default in
-//    unattended runs. This list can never be complete — which is exactly why
-//    allowIrreversible is opt-in per job, assuming "something may have slipped through".
-//    Korean, Chinese and Spanish terms are included because target sites are not English-only.
+// 🔵 click/selector risk is now judged by the shared classifier (sensitiveaction.js) — see
+//    riskyReason(). This regex remains ONLY for scanning eval CODE, which is not a button the
+//    classifier understands. Kept in sync with the classifier's word groups; the classifier's
+//    test locks in that it still catches every term here (no unattended gate weakening).
 const RISKY = /submit|purchase|checkout|pay(ment)?|delete|remove|withdraw|transfer|confirm|결제|구매|결제하기|삭제|제출|확정|송금|출금|주문|支付|付款|购买|删除|提交|确认|转账|提现|下单|pagar|comprar|eliminar|borrar|enviar|confirmar|transferir|retirar|pedido/i;
 
 // ---------------------------------------------------------------- utils
@@ -153,9 +154,16 @@ function nextRun(c, from) {
 // ---------------------------------------------------------------- execution
 
 function riskyReason(step) {
+  // 🔵 One classifier, shared with the engine's per-click gate (sensitiveaction.js), so
+  //    "what counts as pay/send/delete" is defined in ONE place instead of drifting between a
+  //    cron regex and an engine list. A click/selector goes through classify(); it also names
+  //    the KIND (pay/send/delete/…), which we surface so the refusal says what it refused.
   for (const k of ['click', 'selector']) {
-    if (step[k] && RISKY.test(step[k])) return `${k}: ${step[k]}`;
+    if (!step[k]) continue;
+    const v = classify(k === 'click' ? { text: step[k], selector: step[k] } : { selector: step[k] });
+    if (v.sensitive) return `${k}: ${step[k]} (${v.kind})`;
   }
+  // eval is JS code, not a button — keep scanning it for the same keywords by regex.
   if (step.eval && RISKY.test(step.eval)) return 'risky keyword in eval code';
   return null;
 }

@@ -5,6 +5,22 @@ has the detail.
 
 ---
 
+## 0.15.1 — 2026-09-05
+
+### One place decides what counts as a sensitive action
+
+The unattended-run gate (which refuses pay / send / delete / submit steps unless a job opts in)
+was a regex living in `cron.js`; a separate idea of "sensitive" would have drifted from it over
+time. It is now a shared classifier, `sensitiveaction.js`, that `cron.js` delegates to — so the
+definition lives in **one** place, and the refusal now also names the *kind* it refused (pay,
+send, delete, confirm). A regression test locks in that the classifier still catches every term
+the old gate did, in all four languages, so consolidating did not quietly weaken the gate.
+
+No behaviour change for you: unattended jobs still refuse those steps unless they opt in; they
+just say which kind, and the rule is now defined once.
+
+---
+
 ## 0.15.0 — 2026-09-05
 
 ### `wb remember` / `wb recall` — a local memory of which site is for which task
