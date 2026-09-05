@@ -902,6 +902,9 @@ async function act(cmd) {
     tabs.set(`${cmd.agent || ''}::${tab}`, page);
     done.push('newwindow');
   }
+  // Holds a >=400 status from the goto below until `result` exists (declared later). See the
+  // note at the assignment — reading result.httpStatus inline was a TDZ crash.
+  let gotoHttpStatus;
   if (cmd.goto) {
     // 🔴 A goto timeout does not mean the page failed to load. Heavy SPAs keep requests
     //    in flight long past the point where the page is usable, and Playwright rejects
@@ -923,7 +926,12 @@ async function act(cmd) {
       //    (visiting an error page on purpose is legitimate), but we report it so "a 200
       //    pretending to be a 404" is visible. `null` means a same-document navigation with
       //    no response object, which is normal.
-      if (resp) { const s = resp.status(); if (s >= 400) result.httpStatus = s; }
+      // 🔴 `result` is not declared until later in this function, so stash the status in a
+      //    local now and attach it after `result` exists. Reading result.httpStatus here was a
+      //    TDZ crash ("Cannot access 'result' before initialization") that only fired when a
+      //    real HTTP response came back — external https had one, local same-document navs did
+      //    not, so it looked URL-specific. Reported 2026-09-05 (idifference).
+      if (resp) { const s = resp.status(); if (s >= 400) gotoHttpStatus = s; }
       // 🔴 goto can RESOLVE (no error, no timeout) and still leave the tab on about:blank —
       //    playwright reports the navigation as done while the page never actually left.
       //    Reported 2026-09-04: `goto http://<ip>:3100/ko/home` returned success every time
@@ -1113,6 +1121,7 @@ async function act(cmd) {
   const result = { tab, agent: cmd.agent || null, account: usedProfile, done };
   if (evalResult !== undefined) result.result = evalResult;
   if (evalError) result.evalError = evalError;
+  if (gotoHttpStatus !== undefined) result.httpStatus = gotoHttpStatus;
 
   // Query console / errors / failed requests. Can be narrowed with filter (a regex).
   if (cmd.console || cmd.errors || cmd.network) {

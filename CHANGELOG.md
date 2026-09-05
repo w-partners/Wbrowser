@@ -5,6 +5,26 @@ has the detail.
 
 ---
 
+## 0.15.5 — 2026-09-05
+
+### `goto` to a page that returns a real HTTP response no longer crashes (TDZ regression)
+
+Reported 2026-09-05 (idifference): `wb go https://…` failed with `Cannot access 'result' before
+initialization`, but only for **external** targets — a local same-document navigation worked.
+The cause was a temporal-dead-zone bug: the goto handler read `result.httpStatus` while `result`
+is declared later in the same function. Only a goto that came back with a real response object
+(status ≥ 400 surfacing) touched that line — external https had one, a same-document local nav
+did not, which is why it looked URL-specific. The status is now stashed in a local and attached
+after `result` exists. `httpStatus` still surfaces (a 404 page still reports 404); it just no
+longer crashes getting there.
+
+🔵 Why the tests missed it: the e2e suite drove only local pages, which did not produce the
+response object that triggered the branch. An e2e check now does a `goto` to a 404 route
+specifically to exercise it, and a source test guards against reading `result.httpStatus` before
+`result` is declared.
+
+---
+
 ## 0.15.4 — 2026-09-05
 
 ### A command with a tab name that was never opened now errors, instead of reading a blank tab

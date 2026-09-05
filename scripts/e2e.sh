@@ -249,6 +249,15 @@ node -e '
     //   body streamed, response left open    -> goto times out, evaluate works, the
     //                                           DOM is fully operable. This one.
     // NOTE: inside a single-quoted shell string. No apostrophes.
+    // A route that returns a real 4xx response with a complete body. This exercises the
+    // goto path where playwright HAS a response object (resp) and status >= 400 — the exact
+    // branch whose result.httpStatus read was a TDZ crash (fixed 2026-09-05, idifference).
+    // A local server gives resp here just like external https does.
+    if (req.url === "/404") {
+      res.writeHead(404, {"Content-Type": "text/html"});
+      res.end("<!doctype html><html><head><title>Missing</title></head><body>gone</body></html>");
+      return;
+    }
     res.writeHead(200, {"Content-Type": "text/html"});
     res.write("<!doctype html><html><head><title>Slow</title></head><body>"
             + "<h1>Slow Page</h1><p>usable</p>");
@@ -276,6 +285,13 @@ check "eval on an unopened tab errors, not silent blank" "$E" \
   "'no page for tab' in (d.get('error') or '')"
 check "and the error names the tab and the fix"          "$E" \
   "\"never-opened-\" in (d.get('error') or '') and \"go\" in (d.get('error') or '')"
+
+# 🔴 goto to a page that returns 4xx must NOT crash and must surface the status. This goto has
+#    a real response object (resp), which is the branch a TDZ used to blow up on — external
+#    https had a response, local same-document did not, so it looked URL-specific (2026-09-05).
+H=$(act '{"goto":"http://127.0.0.1:'"$PORT_SLOW"'/404","read":true,"agent":"'"$AGENT"'","tab":"h4"}')
+check "goto with a real HTTP response does not TDZ-crash" "$H" "not d.get('error')"
+check "and the 4xx status is surfaced, not swallowed"      "$H" "d.get('httpStatus') == 404"
 
 # 🔵 By port, never by name.
 slow_pid=$(ss -ltnp 2>/dev/null | grep ":$PORT_SLOW " | grep -oP 'pid=\K[0-9]+' | head -1)

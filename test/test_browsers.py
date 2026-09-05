@@ -296,6 +296,14 @@ def test_goto_surfaces_http_error_status():
     #    the server's 404 body) and the caller cannot see it without the console. We report a
     #    4xx/5xx status instead of hiding it — but do NOT throw, since visiting an error page
     #    on purpose is legitimate.
+    # 🔴 Check the behaviour, not one exact line: a >=400 status is captured and ends up on
+    #    result.httpStatus. The status is stashed in a local first (result is declared later in
+    #    the function — reading it inline was a TDZ crash, fixed 2026-09-05), so match both the
+    #    capture and the assignment without pinning the variable name or spacing.
+    import re
     src = (ROOT / "engine.js").read_text()
-    assert "result.httpStatus = s" in src
-    assert "s >= 400" in src
+    assert "s >= 400" in src, "the 4xx/5xx threshold is gone"
+    assert re.search(r"result\.httpStatus\s*=", src), "httpStatus is no longer set on result"
+    # And it must be set AFTER result exists — i.e. not the old inline read that crashed.
+    assert re.search(r"const result = \{[^}]*\}[\s\S]*result\.httpStatus\s*=", src), \
+        "httpStatus is assigned before result is declared (TDZ risk)"
