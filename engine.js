@@ -22,8 +22,24 @@ require('./preflight').requireInstalled();
 
 const { chromium } = require('playwright');
 const { appendJournal } = require('./journal');
+const vault = require('./vault');
+const loginfields = require('./loginfields');
+const credaudit = require('./credaudit');
+const os = require('os');
+const path = require('path');
 
 const PORT = process.env.WBROWSER_PORT || 7981;
+
+// --- credential state (see docs/DESIGN-credential-vault.md) ---
+// 🔴 The master passphrase is entered once per engine start; we hold only the passphrase in
+//    memory (not the decrypted payload) and decrypt per-use, then drop the plaintext. The AI
+//    driving wb never receives any of this — these live only in the engine process.
+const CRED_VAULT_FILE = process.env.WBROWSER_CRED_FILE
+  || path.join(os.homedir(), '.wbrowser', 'creds.enc');
+const CRED_AUDIT_FILE = process.env.WBROWSER_CRED_AUDIT
+  || path.join(os.homedir(), '.wbrowser', 'creds-audit.log');
+let credPassphrase = null;          // set by /cred/unlock, held for the engine's lifetime
+const credSubmitPolicy = new Map(); // origin -> 'always' | 'never' (remembered after first use)
 // 🔵 Which browser this engine drives, for the tab label. 1 is the Chrome you were
 //    already in; 2, 3… are the named ones. A tab then reads `[1-2]` — browser 1,
 //    tab 2 — which is how a person refers to it out loud.
@@ -1224,6 +1240,129 @@ const server = http.createServer(async (req, res) => {
       return res.end(JSON.stringify({
         ok: true, added: fresh.length, skippedExpired: cookies.length - fresh.length,
       }, null, 2));
+    }
+    // --- credential vault endpoints (docs/DESIGN-credential-vault.md) ---
+    // 🔴 These requests carry secrets in their bodies. They are NEVER journaled and NEVER
+    //    echo a secret back. The AI driving wb does not call these — the wb CLI does, reading
+    //    the user's own keystrokes. The engine binds to 127.0.0.1 only (mandatory here).
+    if (req.method === 'POST' && req.url === '/cred/unlock') {
+      // Hold the master passphrase for the engine's lifetime. Verify it by attempting a
+      // decrypt of the existing vault (if any) so a wrong passphrase is caught now, not later.
+      const body = JSON.parse((await readBody(req)) || '{}');
+      const pass = body.passphrase;
+      if (typeof pass !== 'string' || !pass) {
+        res.statusCode = 400; return res.end(JSON.stringify({ error: 'passphrase required' }));
+      }
+      try {
+        vault.loadPayload(CRED_VAULT_FILE, pass);   // throws on wrong passphrase / tamper
+      } catch (e) {
+        res.statusCode = 403;
+        return res.end(JSON.stringify({ error: 'could not unlock the vault with that passphrase' }));
+      }
+      credPassphrase = pass;
+      return res.end(JSON.stringify({ ok: true }));
+    }
+    if (req.method === 'POST' && req.url === '/cred/enroll') {
+      // Store a credential. Body: { origin, username, password, submitPolicy? }. Never logged.
+      if (!credPassphrase) {
+        res.statusCode = 409; return res.end(JSON.stringify({ error: 'vault is locked — unlock first' }));
+      }
+      const body = JSON.parse((await readBody(req)) || '{}');
+      const { origin, username, password } = body;
+      if (!origin || typeof password !== 'string' || !password) {
+        res.statusCode = 400; return res.end(JSON.stringify({ error: 'origin and password are required' }));
+      }
+      const payload = vault.loadPayload(CRED_VAULT_FILE, credPassphrase);
+      payload.sites[origin] = {
+        username: username || '',
+        password,
+        submitPolicy: body.submitPolicy || 'confirm',   // confirm on first use per site
+      };
+      vault.savePayload(CRED_VAULT_FILE, payload, credPassphrase);
+      credaudit.append(CRED_AUDIT_FILE, {
+        ts: new Date().toISOString(), action: 'enroll', origin, user: username,
+      });
+      // 🔴 Echo nothing back but success — no username, no policy, certainly no password.
+      return res.end(JSON.stringify({ ok: true }));
+    }
+    if (req.method === 'POST' && req.url === '/cred/login') {
+      // Autologin. Body: { origin, agent, tab?, confirmSubmit? }. Fills fields over CDP; the
+      // secret goes value->field and never back to the caller.
+      if (!credPassphrase) {
+        res.statusCode = 409; return res.end(JSON.stringify({ error: 'vault is locked — unlock first' }));
+      }
+      const body = JSON.parse((await readBody(req)) || '{}');
+      const { origin, agent } = body;
+      if (!origin) { res.statusCode = 400; return res.end(JSON.stringify({ error: 'origin required' })); }
+      const payload = vault.loadPayload(CRED_VAULT_FILE, credPassphrase);
+      const entry = payload.sites[origin];
+      if (!entry) {
+        res.statusCode = 404;
+        return res.end(JSON.stringify({ error: `no credential stored for ${origin} — enroll it first` }));
+      }
+      const page = await getTab(body.tab || 'main', null, false, agent);
+      // Gather visible field descriptors (identity only — never values) and choose the fields.
+      const candidates = await page.evaluate(() => {
+        const out = []; let n = 0;
+        const push = (el, tag) => {
+          const r = el.getBoundingClientRect();
+          const visible = !!(r.width && r.height) && el.offsetParent !== null && !el.disabled;
+          out.push({
+            ref: 'f' + (n++), tag, type: (el.type || '').toLowerCase(),
+            name: (el.name || '').toLowerCase(), id: (el.id || '').toLowerCase(),
+            autocomplete: (el.getAttribute('autocomplete') || '').toLowerCase(),
+            placeholder: (el.placeholder || '').toLowerCase(),
+            ariaLabel: (el.getAttribute('aria-label') || '').toLowerCase(),
+            text: (el.innerText || el.value || '').slice(0, 40),
+            visible,
+          });
+          el.setAttribute('data-wb-ref', out[out.length - 1].ref);
+        };
+        document.querySelectorAll('input').forEach((el) => push(el, 'input'));
+        document.querySelectorAll('button,[role=button],input[type=submit]').forEach((el) => push(el, 'button'));
+        return out;
+      });
+      let picked;
+      try {
+        picked = loginfields.choose(candidates);
+      } catch (e) {
+        credaudit.append(CRED_AUDIT_FILE, {
+          ts: new Date().toISOString(), action: 'refused', origin, note: e.message,
+        });
+        res.statusCode = 422;
+        return res.end(JSON.stringify({ error: e.message }));
+      }
+      // Type the values straight into the fields by their marker. The secret never leaves here.
+      const typeInto = async (ref, value) => {
+        if (!ref) return;
+        const sel = `[data-wb-ref="${ref}"]`;
+        await page.fill(sel, value);
+      };
+      if (picked.username && entry.username) await typeInto(picked.username, entry.username);
+      await typeInto(picked.password, entry.password);
+      credaudit.append(CRED_AUDIT_FILE, {
+        ts: new Date().toISOString(), action: 'autologin', origin,
+        user: entry.username, field: 'password',
+      });
+      // Submit gating: confirm on first use per site, then remember.
+      const remembered = credSubmitPolicy.get(origin);
+      const shouldSubmit = remembered === 'always'
+        || (remembered === undefined && body.confirmSubmit === true);
+      if (body.confirmSubmit === true && remembered === undefined) {
+        credSubmitPolicy.set(origin, 'always');   // the user approved — remember it
+      }
+      let submitted = false;
+      if (shouldSubmit && picked.submit) {
+        await page.click(`[data-wb-ref="${picked.submit}"]`).catch(() => {});
+        submitted = true;
+        credaudit.append(CRED_AUDIT_FILE, {
+          ts: new Date().toISOString(), action: 'submit', origin,
+        });
+      }
+      return res.end(JSON.stringify({
+        ok: true, filled: true, submitted,
+        needsConfirm: !shouldSubmit && !!picked.submit,
+      }));
     }
     if (req.method === 'GET' && req.url === '/logins') {
       // What we are logged into. 🔴 Never return cookie 'values' — that is a

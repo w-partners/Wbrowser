@@ -646,6 +646,26 @@ print('Saved:', '$OUT')
       tail -n "${1:-40}" "$LOG"
     fi
     ;;
+  login)
+    # Autologin using a stored credential. Enroll with --save.
+    #   wb login example.com --save     the USER types username + password here (echo off);
+    #                                   they go straight to the engine and into the vault.
+    #   wb login example.com            the engine decrypts and fills the login form.
+    #
+    # 🔴 Secrets never pass through the model. This handler reads the user's own keystrokes
+    #    with getpass (no echo, not in argv, not in shell history) and posts them to the local
+    #    engine directly. `wb` prints nothing back but success. The agent driving wb cannot
+    #    call this on the user's behalf — it needs the user at the terminal.
+    _require_engine
+    SITE="${1:-}"
+    [ -n "$SITE" ] || { echo "Usage: wb login <site> [--save]   e.g. wb login example.com" >&2; exit 1; }
+    # Normalise to an origin (strip scheme/path); the engine keys the vault by this.
+    ORIGIN="$(printf '%s' "$SITE" | sed -E 's#^https?://##; s#/.*$##')"
+    SAVE=0; case " $* " in *" --save "*) SAVE=1 ;; esac
+    CONFIRM=0; case " $* " in *" --confirm "*) CONFIRM=1 ;; esac
+    WBROWSER_ENGINE="$ENGINE" WB_ORIGIN="$ORIGIN" WB_SAVE="$SAVE" WB_CONFIRM="$CONFIRM" \
+      WB_AGENT="$AGENT_NAME" python3 "$DIR/credlogin.py"
+    ;;
   down)
     # 🔴 pkill -f also catches ourselves and the parent shell (if the same string is on their command line).
     #    It actually killed the shell that invoked this script (2026-08-23). Narrow the target.

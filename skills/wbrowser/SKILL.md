@@ -256,6 +256,34 @@ wb -a work@example.com go https://mail...   # drive a specific one
 🔴 Naming an account that is not open **fails**. It does not pick a lookalike —
 sending mail from the wrong account is worse than an error.
 
+## Logging in without exposing the password (`wb login`)
+
+When a site is **not** already signed in, you normally stop — you cannot type the user's
+password, and you should not. `wb login` closes that: the user stores a credential once, and
+the engine fills the login form for you. **The AI never sees the password** — it is entered by
+the user, encrypted into a local vault, and typed into the field over CDP. The value never
+crosses into the agent's context, the logs, or the audit trail.
+
+```bash
+wb login example.com --save     # the USER types username + password here (echo off).
+                                #   Stored encrypted in ~/.wbrowser/creds.enc — you never see it.
+wb login example.com            # the engine unlocks the vault and fills the login form.
+wb login example.com --confirm  # …and clicks submit (first time per site needs this; then remembered)
+```
+
+- 🔴 `--save` requires the **user at the terminal** — the agent cannot enroll a credential on
+  the user's behalf (that is the point). If you need a credential stored, ask the user to run
+  `wb login <site> --save`.
+- The engine **refuses** rather than guess: if it cannot confidently find the password field
+  (none visible, or two — a change-password form), it says so and types nothing. A secret in
+  the wrong field is the worst outcome, so it is designed out.
+- Submit is gated: the first login per site waits for `--confirm`; after that the choice is
+  remembered for the engine's lifetime.
+- Every use is written to an audit log (`~/.wbrowser/creds-audit.log`) — which site, which
+  action, when, username masked — **never the value**.
+- The vault is unlocked once per engine start (the user enters the master passphrase); a
+  `wb down; wb up` re-locks it.
+
 ## Scheduled runs
 
 ```bash
