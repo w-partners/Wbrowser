@@ -126,6 +126,11 @@ isn't configured (reported 2026-09-05). The portable way is the CDP browser endp
 wherever the debugging port does: open a websocket to the `webSocketDebuggerUrl` from
 `curl http://127.0.0.1:9222/json/version` and send `{"id":1,"method":"Browser.close"}`. Then
 `wb up` starts a fresh Chrome (and clears the utility-world buildup).
+🔴 `Browser.close` closes the **whole** Chrome, not one tab — so it ends every tab in it,
+including ones **other agents** are using (not just your own). Check `wb tabs` first: if a tab
+belongs to someone else, don't restart Chrome for your own sake — wait until it's clear, ask
+them, or let the master restart it. A stuck URL of yours is not worth cutting off another
+agent's work (reported 2026-09-05: an agent correctly held off for exactly this reason).
 
 **Which layer is it?** These look alike from the outside but want different fixes. You do
 not need to hand-write raw CDP — `wb status` already probes CDP and the engine, so read it

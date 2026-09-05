@@ -5,6 +5,19 @@ has the detail.
 
 ---
 
+## 0.15.3 — 2026-09-05
+
+### Docs: closing Chrome ends OTHER agents' tabs too, not just yours
+
+Follow-up to 0.15.2. The WSL close-Chrome note said `wb` doesn't kill Chrome because "it may be
+a window you're using" — but the real risk is wider: `Browser.close` ends the **whole** Chrome,
+so it cuts off tabs **other agents** are using, not only your own. The SKILL now says to check
+`wb tabs` first and hold off if a tab belongs to someone else — a stuck URL of yours is not
+worth cutting another agent's work. Reported by a peer who correctly held off for exactly this.
+Docs only.
+
+---
+
 ## 0.15.2 — 2026-09-05
 
 ### Docs: how to close Chrome on WSL when a restart is needed
