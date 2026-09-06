@@ -187,6 +187,38 @@ def test_rawcdp_attach_probes_for_a_live_tab():
     assert "no live page target" in raw
     assert "Runtime.evaluate" in raw and "1500" in raw   # short liveness probe
 
+def test_gettab_reconnects_when_knock_dies_but_raw_cdp_is_up():
+    # 🔴 Reported 2026-09-06 (idifference): over a network boundary (Windows Chrome ↔ WSL2),
+    #    a browser websocket goes half-dead AFTER a successful connect — the first goto works,
+    #    then every later command times out. connect()'s reconnect only fires when
+    #    connectOverCDP itself times out; here it succeeds, so isConnected() stays true and
+    #    connect() reuses the dead handle forever ("engine-restart per goto"). The tab-reuse
+    #    knock in getTab (evaluate round-trip) is the first thing that hangs on the dead socket,
+    #    so that is where we detect it: if the knock does not answer but raw CDP is instant,
+    #    the browser socket is half-dead — drop it and reconnect once, then retry, instead of
+    #    opening another tab on the same dead socket (which hangs identically).
+    src = (ROOT / "engine.js").read_text()
+    # a single SSOT helper decides "socket half-dead" (raw CDP up while playwright hangs),
+    # used by both the connect() timeout path and the getTab knock path — not duplicated.
+    assert "async function rawCdpAlive(" in src, "no SSOT helper for the raw-CDP liveness check"
+    # getTab's knock failure must consult it and trigger the one-shot reconnect, not just
+    # delete the tab and open a fresh one on the same dead socket.
+    assert "reviveIfHalfDead" in src, "getTab does not try to revive a half-dead socket"
+
+
+def test_halfdead_revive_is_bounded_and_one_shot():
+    # 🔴 The revive must not loop and must not hang. It reuses the same engine-wide guards as
+    #    connect()'s reconnect (reconnectFailed / reconnecting) so a socket that will not come
+    #    back does not reconnect on every request, and it is bounded by the same wall-clock
+    #    backstop so a second half-dead socket fails fast instead of hanging forever.
+    src = (ROOT / "engine.js").read_text()
+    # revive drops the dead browser handle and goes through connect(), which is already
+    # guarded one-shot and wall-clock-bounded (see the two tests above).
+    assert "async function reviveIfHalfDead(" in src
+    # it only acts when raw CDP is actually up — never blindly reconnects on any timeout
+    assert "rawCdpAlive()" in src
+
+
 def test_fallback_click_handles_playwright_selectors_and_fails_loudly():
     # 🔴 Reported 2026-09-04 (zalman): fallback click on `button:has-text("...")` / `text=...`
     #    threw a bare "Uncaught" (a querySelector SyntaxError) before any click logic — the

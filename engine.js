@@ -114,6 +114,55 @@ let reconnectFailed = false;
 //    instead of launching their own.
 let reconnecting = false;
 
+// 🔵 SSOT for "is Chrome answering raw CDP right now". A half-dead browser websocket (the
+//    socket playwright holds went one-way — proxy recycle / idle timeout, common across a
+//    network boundary like Windows Chrome ↔ WSL2) leaves Chrome itself perfectly healthy:
+//    HTTP /json/version answers instantly while every playwright round trip hangs. Both the
+//    connect() timeout path and the getTab knock path ask this same question, so it lives in
+//    one place. Short, bounded — a hang here would defeat the purpose.
+async function rawCdpAlive() {
+  try {
+    const r = await fetch(`${CDP}/json/version`, { signal: AbortSignal.timeout(2000) });
+    return r.ok;
+  } catch { return false; }
+}
+
+// 🔴 Reported 2026-09-06 (idifference): over a network boundary the browser websocket goes
+//    half-dead AFTER a clean connect — the first goto works, then every later command times
+//    out. connect()'s reconnect only fires when connectOverCDP ITSELF times out; here it
+//    already succeeded, so isConnected() stays true (a one-way-dead socket never emits the
+//    'close' event that flips it) and connect() reuses the dead handle forever. The symptom is
+//    exactly "one goto per engine connection": a fresh socket serves one command, dies, and the
+//    next request sails past the isConnected() gate onto a corpse. isConnected() is necessary
+//    but not sufficient — the only proof a socket is alive is a round trip that returns.
+//
+//    So when a playwright round trip has just hung (the caller passes hung=true) while raw CDP
+//    is instant, the socket is half-dead: drop it and reconnect ONCE. Returns true if a fresh
+//    socket was established (caller should retry its operation), false otherwise (leave the
+//    caller's own error path to run). Reuses connect()'s engine-wide one-shot guards so a
+//    socket that will not recover does not reconnect on every request.
+async function reviveIfHalfDead(hung) {
+  if (!hung) return false;
+  if (reconnectFailed || reconnecting) return false;   // a reconnect already ran / is running
+  if (!await rawCdpAlive()) return false;              // Chrome is genuinely gone — not half-dead
+  reconnecting = true;
+  console.error(`[revive] ${new Date().toISOString()} a round trip hung while raw CDP is instant — the browser socket is half-dead; dropping it and reconnecting once`);
+  try {
+    if (browser) {
+      const b = browser;
+      const closed = b.close().catch(() => {});        // a half-dead close can reject late; swallow it
+      await Promise.race([closed, new Promise((r) => { setTimeout(r, 2000); })]);
+    }
+    browser = null; ctx = null; tabs.clear();
+  } finally {
+    reconnecting = false;
+  }
+  try {
+    await connect();                                   // one-shot + wall-clock-bounded already
+    return !!(browser && browser.isConnected());
+  } catch { return false; }
+}
+
 // The CDP connection can drop (Chrome quits / restarts). Check on every request
 // whether it is still alive and reattach if it died — so we never fail silently
 // on a dead handle.
@@ -140,11 +189,7 @@ async function connect(_reconnecting) {
     // buildup. The recursive connect(true) below is bounded by the same backstop, so a second
     // hang now fails fast instead of hanging forever (the original bug: reported 2026-09-05).
     if (/Timeout .* exceeded/i.test(e.message || '') || /did not return within/.test(e.message || '')) {
-      let reachable = false;
-      try {
-        const r = await fetch(`${CDP}/json/version`, { signal: AbortSignal.timeout(2000) });
-        reachable = r.ok;
-      } catch { /* leave it false */ }
+      const reachable = await rawCdpAlive();
       if (reachable && !_reconnecting && !reconnectFailed && !reconnecting) {
         // 🔵 Two different faults look identical here — a connectOverCDP timeout while
         //    Chrome answers raw CDP — and they want opposite responses:
@@ -371,7 +416,7 @@ async function titleOf(page) {
   } catch { return ''; }
 }
 
-async function getTab(name, accountHint, strict, agent, mustExist = false) {
+async function getTab(name, accountHint, strict, agent, mustExist = false, _revived = false) {
   await connect();
   const tabName = name || 'main';
   // 🔵 Partition tabs per agent — if I overwrite a tab another agent was using,
@@ -397,6 +442,20 @@ async function getTab(name, accountHint, strict, agent, mustExist = false) {
       new Promise((res) => { setTimeout(() => res(false), 1500); }),
     ]);
     if (alive) return existing;
+    // 🔴 The knock did not answer. Two very different causes, and they want opposite responses:
+    //      • a dead TAB (the renderer stopped) — drop it and open a fresh one (below).
+    //      • a half-dead browser SOCKET — the knock hangs because the whole websocket is
+    //        one-way dead, and opening a new tab would hang identically on the same socket.
+    //        This is the "one goto per engine connection" report (idifference 2026-09-06):
+    //        the first command works, the socket dies, and every later command lands here.
+    //    Tell them apart the only way that is decisive: if Chrome still answers raw CDP
+    //    instantly, the tab did not kill the socket — the socket is half-dead. Reconnect once
+    //    and retry the whole lookup on the fresh socket. reviveIfHalfDead is one-shot
+    //    engine-wide, and _revived caps the retry, so a socket that will not come back falls
+    //    through to the normal "open a fresh tab" path instead of looping.
+    if (!_revived && await reviveIfHalfDead(true)) {
+      return getTab(name, accountHint, strict, agent, mustExist, true);
+    }
     tabs.delete(key);
     try { await existing.close({ runBeforeUnload: false }); } catch { /* already gone */ }
   }
@@ -1242,12 +1301,19 @@ async function act(cmd) {
       //    accumulated utility worlds, which we can detect WITHOUT adding one: if the raw
       //    CDP endpoint answers instantly while page.evaluate hangs, Chrome is fine and
       //    the fault is the connection. Restarting Chrome is the only thing that clears it.
-      let cdpFast = false;
-      try {
-        const r = await fetch(`${CDP}/json/version`, { signal: AbortSignal.timeout(2000) });
-        cdpFast = r.ok;
-      } catch { /* leave false */ }
-      result.readError = cdpFast
+      const cdpFast = await rawCdpAlive();
+      // 🔵 If raw CDP is instant while the read hung, the browser socket is half-dead — try to
+      //    revive it now (one-shot, engine-wide) so the caller's NEXT request lands on a fresh
+      //    socket without anyone restarting the engine by hand. If the revive establishes a new
+      //    socket, say so; if it could not (world buildup, or already retried), fall back to the
+      //    restart guidance. (idifference 2026-09-06.)
+      const revived = cdpFast && await reviveIfHalfDead(true);
+      result.readError = revived
+        ? 'read: timed out after 30s on a half-dead browser socket (Chrome answered raw CDP '
+          + 'instantly). Reconnected automatically on a fresh socket — just run the command '
+          + 'again and it should go through. If it still times out, the fault is not the socket: '
+          + 'restart the ENGINE ("wb down && wb up").'
+        : cdpFast
         ? 'read: timed out after 30s. Chrome answers raw CDP instantly, so the page is '
           + 'fine — playwright cannot reach its execution context. First restart the ENGINE '
           + '("wb down && wb up") — the stale state is often in the engine\'s connection, and '

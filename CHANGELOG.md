@@ -5,6 +5,34 @@ has the detail.
 
 ---
 
+## 0.17.1 — 2026-09-06
+
+### A half-dead browser socket now recovers by itself — no more "one goto per engine restart"
+
+Over a network boundary (Windows Chrome ↔ WSL2, Tailscale, a proxy), the websocket the engine
+holds to Chrome can go **half-dead**: it stops carrying replies while staying open, so Chrome
+answers raw CDP instantly but every Playwright round trip hangs. The first `go` after a connect
+worked, then every later command timed out — until you ran `wb down && wb up` by hand, which only
+bought one more command before it died again. It looked like "one goto per engine connection".
+
+The cause: `isConnected()` only flips to false when the socket emits a `close` event, and a
+one-way-dead socket never does — so the engine kept reusing a dead handle forever. `isConnected()`
+is necessary but not sufficient; the only proof a socket is alive is a round trip that returns.
+
+Now, when a round trip hangs while raw CDP is instant, the engine recognises the half-dead socket,
+drops it, and reconnects **once** on a fresh socket — then retries. You don't restart anything: the
+next command just goes through. It's one-shot and engine-wide, so a socket that genuinely won't
+recover (utility-world buildup) still falls through to the restart guidance instead of looping.
+
+- The `no page for tab '<name>'` that followed a successful `go` had the same root — the reconnect
+  cleared the tab map and the page-probe then timed out on the dead socket. Reviving the socket
+  fixes both.
+- Reported and reproduced 2026-09-06 (idifference), confirmed with an injected half-dead socket
+  (a TCP proxy that drops the reply direction): `isConnected` stayed `true` on the corpse; the
+  revive re-established a live socket and the next `go` succeeded.
+
+---
+
 ## 0.17.0 — 2026-09-06
 
 ### Logins fill themselves — you don't have to call `wb login` anymore
