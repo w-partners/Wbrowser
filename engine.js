@@ -208,13 +208,19 @@ async function tryRecoverFromFallback() {
   } finally {
     reconnecting = false;
   }
+  // 🔴 Hold the fresh handle in a LOCAL, not the shared `browser`, until it is fully wired.
+  //    connectOverCDPBounded() awaits, and during that await a previous connection's
+  //    'disconnected' handler can fire and set the shared `browser` to null — then
+  //    `browser.contexts()` below crashes on null even though THIS attach succeeded (idifference
+  //    2026-09-06, engine.js:335). Reading contexts off the local is immune to that race.
+  let b;
   try {
-    browser = await connectOverCDPBounded();
+    b = await connectOverCDPBounded();
   } catch { return false; }                            // still dead — caller uses the fallback
-  // Same wiring connect() does on a successful attach, and clear the flag so act() rejoins the
-  // normal (playwright) path from here on.
-  ctx = browser.contexts()[0];
-  if (!ctx) { browser = null; return false; }
+  if (!b) return false;
+  const c = b.contexts()[0];
+  if (!c) return false;
+  browser = b; ctx = c;
   tabs.clear();
   browser.on('disconnected', () => { browser = null; ctx = null; tabs.clear(); });
   reconnectFailed = false;
@@ -332,10 +338,20 @@ async function connect(_reconnecting) {
     }
     throw e;
   }
-  ctx = browser.contexts()[0];
+  // 🔴 The attach at line ~237 assigns the shared `browser`, and connectOverCDPBounded() awaits.
+  //    During that await a PREVIOUS connection's 'disconnected' handler can fire and null the
+  //    shared `browser` — so even though this attach succeeded, `browser` may already be null
+  //    here and `browser.contexts()` crashes on null (idifference 2026-09-06: `Cannot read
+  //    properties of null (reading 'contexts')` five minutes into a fresh engine, while Chrome
+  //    was being killed and restarted so 'disconnected' events were in flight). Snapshot it and
+  //    guard: if it went away mid-attach, mark degraded and let the caller fall back rather than
+  //    dereference null.
+  const b = browser;
+  if (!b) { reconnectFailed = true; throw needsFallbackError(); }
+  ctx = b.contexts()[0];
   if (!ctx) throw new Error('CDP has no context — Chrome is in a bad state.');
   tabs.clear();
-  browser.on('disconnected', () => { browser = null; ctx = null; tabs.clear(); });
+  b.on('disconnected', () => { browser = null; ctx = null; tabs.clear(); });
 }
 
 // 🔴 If the user has several profiles open, the same CDP shows windows for

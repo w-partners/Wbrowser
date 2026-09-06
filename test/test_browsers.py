@@ -230,6 +230,23 @@ def test_a_failed_revive_never_leaves_a_null_browser_for_the_caller():
         "act() must reroute a needsFallback signal to the raw-CDP fallback"
 
 
+def test_connect_snapshots_browser_before_reading_contexts():
+    # 🔴 Reported 2026-09-06 (idifference RPT-01): the null crash still fired five minutes into a
+    #    fresh v0.17.3 engine, at engine.js:335 `ctx = browser.contexts()[0]`. Root cause: the
+    #    attach assigns the SHARED `browser` and connectOverCDPBounded() awaits; during that await
+    #    a previous connection's 'disconnected' handler can null the shared `browser`, so even a
+    #    successful attach can read `.contexts()` off null. connect() must snapshot the handle into
+    #    a local and guard it before dereferencing — the same fix applied to tryRecoverFromFallback.
+    src = (ROOT / "engine.js").read_text()
+    connect_body = src[src.index("async function connect(_reconnecting)"):src.index("async function getTab(")]
+    # after the successful-attach path, it reads contexts off a snapshot, not the shared global,
+    # and bails to the fallback (not a null deref) if the handle vanished mid-attach.
+    assert "const b = browser;" in connect_body, "connect() does not snapshot browser before contexts()"
+    assert "b.contexts()" in connect_body, "connect() still reads contexts() off the shared browser"
+    assert "throw needsFallbackError();" in connect_body, \
+        "connect() must route to the fallback if the handle vanished mid-attach, not crash on null"
+
+
 def test_fallback_is_not_one_way_playwright_recovery_clears_the_flag():
     # 🔴 Reported 2026-09-06 (idifference): on a machine where the playwright connection comes
     #    and goes (intermittent), the engine dropped to the raw-CDP fallback (reconnectFailed=

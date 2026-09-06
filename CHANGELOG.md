@@ -5,6 +5,25 @@ has the detail.
 
 ---
 
+## 0.17.4 — 2026-09-06
+
+### Fix: a disconnect landing mid-attach no longer crashes on a null browser
+
+v0.17.3 stopped the null crash on the revive path, but idifference reproduced it again — five
+minutes into a fresh engine, at the attach in `connect()`. Root cause: the attach assigns the
+**shared** `browser`, and `connectOverCDP` awaits; during that await a *previous* connection's
+`disconnected` handler can fire and set the shared `browser` to `null`. So even a successful attach
+could then read `.contexts()` off `null` (`Cannot read properties of null (reading 'contexts')`) —
+which is exactly what happens while Chrome is being killed and restarted, so `disconnected` events
+are in flight.
+
+Both attach sites (`connect()` and `tryRecoverFromFallback()`) now hold the fresh handle in a local
+and read `.contexts()` off **that**, not the shared global. If the shared handle vanished mid-attach
+the request is routed to the fallback instead of dereferencing null. Reported 2026-09-06
+(idifference RPT-01), locked by source contract tests.
+
+---
+
 ## 0.17.3 — 2026-09-06
 
 ### Fix: a failed reconnect crashed the next command instead of falling back
