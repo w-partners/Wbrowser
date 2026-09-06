@@ -5,6 +5,26 @@ has the detail.
 
 ---
 
+## 0.17.6 — 2026-09-06
+
+### A held engine port fails loudly, and `wb up` tells you when a stale engine is running
+
+Two related silent failures around the engine port, reported 2026-09-06 (idifference):
+
+- **The engine had no listen-error handler.** When the port was already held (a stale engine from
+  a previous run), the new engine hit `EADDRINUSE`, which with no handler became an
+  `uncaughtException` and killed the *new* process — while the *old* engine kept answering
+  `/health`. So `wb status` showed ✅ and "I restarted into the new code" and "the old engine is
+  still running" were indistinguishable. The engine now handles the listen error, names the
+  port-in-use case, and exits non-zero.
+- **`wb up` treated "an engine answers" as "the engine running my code".** After a `git pull`, a
+  stale engine from before the pull kept answering `/health`, so `wb up` said "already up" and you
+  believed the new code was live — it was not. `wb up` now compares the running engine's build to
+  your local version and warns when they differ ("the port is held by an OLDER engine — run
+  `wb down && wb up` to reload").
+
+---
+
 ## 0.17.5 — 2026-09-06
 
 ### Playwright bumped to 1.63

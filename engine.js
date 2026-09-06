@@ -1764,6 +1764,24 @@ const server = http.createServer(async (req, res) => {
 // 🔴 Bind to 127.0.0.1 only. This engine drives the browser the user is logged into,
 //    so leaving it open hands over every one of those sessions.
 //    If external exposure is needed, put gate.js (PIN) in front of it.
+// 🔴 Handle a failed listen — above all EADDRINUSE. Reported 2026-09-06 (idifference): an old
+//    engine still held the port, so `wb up`'s new engine hit EADDRINUSE, which with no handler
+//    became an uncaughtException and killed the NEW process — while the OLD engine kept answering
+//    /health, so `wb status` showed ✅ and "I restarted into the new code" and "the old engine is
+//    still running" became indistinguishable (the silent-failure this tool exists to prevent). So
+//    say exactly what happened and exit non-zero, so `wb up` (which checks the exit code) reports
+//    the failure instead of printing "Chrome already up" over a dead new engine.
+server.on('error', (e) => {
+  if (e && e.code === 'EADDRINUSE') {
+    console.error(
+      `WBROWSER_ENGINE_PORT_IN_USE :${PORT} — another engine is already holding this port. `
+      + `If it is a stale one from a previous run, stop it first ("wb down") then "wb up" again; `
+      + `the new engine did NOT start, so anything answering on :${PORT} is the OLD one.`);
+  } else {
+    console.error(`WBROWSER_ENGINE_LISTEN_FAILED :${PORT} — ${(e && e.message) || e}`);
+  }
+  process.exit(1);
+});
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`WBROWSER_ENGINE_UP http://127.0.0.1:${PORT}  → cdp ${CDP}`);
 });

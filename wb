@@ -363,7 +363,24 @@ case "$cmd" in
         exit 1
       fi
     fi
-    if _engine_up; then echo "· Engine already up"; else
+    # 🔴 "A engine answers" is not "the engine running my code". Reported 2026-09-06
+    #    (idifference): after a `git pull`, a stale engine from before the pull was still holding
+    #    the port and still answering /health, so `wb up` said "already up" and the user thought
+    #    the new code was live — it was not. And when a new engine WAS launched over a held port
+    #    it died on EADDRINUSE while the old one kept answering, so nothing told them apart. So
+    #    when an engine is already up, compare its build to the local code and say if they differ.
+    if _engine_up; then
+      _running_build="$(curl -s --max-time "$_HEALTH_T" "$ENGINE/health" 2>/dev/null \
+        | python3 -c "import sys,json; print(json.load(sys.stdin).get('build',''))" 2>/dev/null)"
+      _local_ver="$(python3 -c "import json;print(json.load(open('$DIR/package.json'))['version'])" 2>/dev/null)"
+      # The running build reads "<version> (<hash>)"; compare on the version, which every clone shares.
+      if [ -n "$_running_build" ] && [ -n "$_local_ver" ] && [ "${_running_build%% *}" != "$_local_ver" ]; then
+        echo "⚠  Engine already up, but it is running build '$_running_build' while your code is v$_local_ver."
+        echo "   The port is held by an OLDER engine — your new code is NOT live. Run 'wb down && wb up' to reload."
+      else
+        echo "· Engine already up${_running_build:+ ($_running_build)}"
+      fi
+    else
       WBROWSER_PORT="$ENGINE_PORT" WBROWSER_CDP_PORT="$CDP_PORT" \
         WBROWSER_BROWSER_NUM="$BROWSER_NUM" \
         nohup node "$DIR/engine.js" > "$LOG" 2>&1 &

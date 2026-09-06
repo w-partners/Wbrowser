@@ -187,6 +187,33 @@ def test_rawcdp_attach_probes_for_a_live_tab():
     assert "no live page target" in raw
     assert "Runtime.evaluate" in raw and "1500" in raw   # short liveness probe
 
+def test_engine_handles_eaddrinuse_instead_of_crashing_silently():
+    # 🔴 Reported 2026-09-06 (idifference): a stale engine held the port, so `wb up`'s new engine
+    #    hit EADDRINUSE — with no listen-error handler that became an uncaughtException and killed
+    #    the NEW process, while the OLD engine kept answering /health. So `wb status` showed ✅ and
+    #    "restarted into new code" vs "old engine still running" became indistinguishable. The
+    #    server must handle the listen error, name EADDRINUSE, and exit non-zero.
+    src = (ROOT / "engine.js").read_text()
+    assert "server.on('error'" in src, "server.listen has no error handler — EADDRINUSE crashes"
+    assert "EADDRINUSE" in src and "PORT_IN_USE" in src, "the port-in-use case is not named"
+    # after saying what happened, exit non-zero so `wb up` (which checks the exit code) reports it
+    err_block = src[src.index("server.on('error'"):src.index("server.listen(PORT")]
+    assert "process.exit(1)" in err_block, "a failed listen must exit non-zero, not fall through"
+
+
+def test_wb_up_flags_a_stale_engine_of_a_different_build():
+    # 🔴 Same report: "an engine answers" is not "the engine running my code". After a git pull a
+    #    stale engine kept answering /health, so `wb up` said "already up" and the user believed
+    #    the new code was live. `wb up` must compare the running build to the local version and
+    #    warn when they differ (the port is held by an older engine).
+    wb = (ROOT / "wb").read_text()
+    up_block = wb[wb.index("  up)"):wb.index("  version|")]
+    assert "/health" in up_block and "build" in up_block, "wb up does not read the running engine's build"
+    assert "OLDER engine" in up_block or "not live" in up_block.lower() or "NOT live" in up_block, \
+        "wb up does not warn when the running engine is a stale build"
+    assert "wb down && wb up" in up_block, "no remedy told to the user (reload with wb down && wb up)"
+
+
 def test_wb_log_path_follows_the_browser(tmp_path):
     # 🔴 Reported 2026-09-06 (idifference): `-b <name>` runs its engine on a different port, but
     #    the log path ignored -b — every browser wrote to and read from the same engine.log. A
