@@ -5,6 +5,26 @@ has the detail.
 
 ---
 
+## 0.17.3 — 2026-09-06
+
+### Fix: a failed reconnect crashed the next command instead of falling back
+
+A regression from v0.17.1/0.17.2. When a half-dead socket was found mid-request (the tab knock
+failed) and the one-shot reconnect could not reattach, the revive helper dropped the browser handle
+to `null` and returned — but did **not** mark the engine degraded. `getTab` then walked straight
+into `pickContext()`'s `browser.contexts()` and crashed with `Cannot read properties of null
+(reading 'contexts')`. In practice `go` worked (it opens its own page early) but the next
+`read`/`eval` on that tab died, on every URL, and neither an engine nor a Chrome restart cleared it.
+
+Now a failed revive marks the engine degraded (`reconnectFailed`) exactly as `connect()`'s own
+failure path does; `getTab` guards against a null browser and raises an explicit fallback signal
+instead of dereferencing it; and `act()` catches that signal and reroutes the request to the
+raw-CDP fallback. So a request that hits an unrecoverable socket now serves over raw CDP (or fails
+with a clear message) rather than crashing on a null. Reported 2026-09-06 (idifference), covered by
+a hermetic unit test (the real `reviveIfHalfDead` run against fakes) plus a source contract test.
+
+---
+
 ## 0.17.2 — 2026-09-06
 
 ### The raw-CDP fallback is no longer a one-way door

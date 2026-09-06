@@ -159,8 +159,25 @@ async function reviveIfHalfDead(hung) {
   }
   try {
     await connect();                                   // one-shot + wall-clock-bounded already
-    return !!(browser && browser.isConnected());
-  } catch { return false; }
+  } catch { /* fall through to the degraded-mark below */ }
+  if (browser && browser.isConnected()) return true;
+  // 🔴 Reconnect did not produce a live browser (idifference 2026-09-06). We dropped the handle
+  //    to null above, so we must NOT return to a caller that will dereference it — getTab would
+  //    walk into pickContext()'s browser.contexts() and crash with "Cannot read properties of
+  //    null (reading 'contexts')". A revive that could not reattach means the engine is degraded
+  //    (half-dead and a fresh socket will not open — utility-world buildup): mark it so the
+  //    caller routes to the raw-CDP fallback, exactly as connect()'s own failure path does.
+  reconnectFailed = true;
+  return false;
+}
+
+// 🔵 A sentinel error meaning "playwright is unusable for this request — retry it on the raw-CDP
+//    fallback". getTab throws this instead of dereferencing a null browser; act() catches it and
+//    reroutes to actViaRawCDP. Carrying a marker (not a string match) keeps the routing explicit.
+function needsFallbackError() {
+  const err = new Error('playwright connection is down — routing this request to the raw-CDP fallback');
+  err.needsFallback = true;
+  return err;
 }
 
 // 🔴 Reported 2026-09-06 (idifference): the raw-CDP fallback was a ONE-WAY door. Once
@@ -495,12 +512,24 @@ async function getTab(name, accountHint, strict, agent, mustExist = false, _revi
     //    and retry the whole lookup on the fresh socket. reviveIfHalfDead is one-shot
     //    engine-wide, and _revived caps the retry, so a socket that will not come back falls
     //    through to the normal "open a fresh tab" path instead of looping.
-    if (!_revived && await reviveIfHalfDead(true)) {
-      return getTab(name, accountHint, strict, agent, mustExist, true);
+    if (!_revived) {
+      const revived = await reviveIfHalfDead(true);
+      if (revived) return getTab(name, accountHint, strict, agent, mustExist, true);
+      // 🔴 revive failed AND marked the engine degraded (reconnectFailed). browser is now null —
+      //    do NOT fall through to pickContext(), which would dereference it. Signal the caller to
+      //    route this request to the raw-CDP fallback (idifference 2026-09-06: `go` worked, the
+      //    socket died, and the next read/eval crashed here with "Cannot read ... null contexts").
+      if (reconnectFailed) throw needsFallbackError();
     }
     tabs.delete(key);
     try { await existing.close({ runBeforeUnload: false }); } catch { /* already gone */ }
   }
+
+  // 🔴 connect()/revive can leave browser null on a failed reconnect. Guard before every path
+  //    that dereferences it — pickContext() calls browser.contexts() straight away. Without this
+  //    a null browser surfaced as "Cannot read properties of null (reading 'contexts')" instead
+  //    of the fallback (idifference 2026-09-06).
+  if (!browser) { reconnectFailed = true; throw needsFallbackError(); }
 
   const targetCtx = await pickContext(accountHint, strict);
 
@@ -1054,9 +1083,19 @@ async function act(cmd) {
   //    returns nothing, silently (idifference 2026-09-05). So require the tab to already exist
   //    unless this command navigates.
   const opensPage = !!cmd.goto;
-  let page = (cmd.newtab || cmd.newwindow)
-    ? null
-    : await getTab(tab, acct, explicit, cmd.agent, !opensPage);
+  let page;
+  try {
+    page = (cmd.newtab || cmd.newwindow)
+      ? null
+      : await getTab(tab, acct, explicit, cmd.agent, !opensPage);
+  } catch (e) {
+    // 🔴 getTab discovered mid-lookup that playwright is unusable (a half-dead socket that a
+    //    fresh connect could not revive) and threw the fallback sentinel rather than dereference
+    //    a null browser. Reroute this request to the raw-CDP fallback — unless it needs a real
+    //    playwright page (newtab/newwindow), which the fallback cannot make. (idifference 2026-09-06)
+    if (e && e.needsFallback && !cmd.newtab && !cmd.newwindow) return actViaRawCDP(cmd, tab);
+    throw e;
+  }
   const done = [];
 
   if (cmd.newtab) {

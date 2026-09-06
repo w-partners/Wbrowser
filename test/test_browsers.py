@@ -211,6 +211,25 @@ def test_wb_log_path_follows_the_browser(tmp_path):
     assert logpath("-b", "a/b c").endswith("/engine-a_b_c.log"), "name not sanitised for the path"
 
 
+def test_a_failed_revive_never_leaves_a_null_browser_for_the_caller():
+    # 🔴 Reported 2026-09-06 (idifference): after v0.17.1/0.17.2, `go` worked but the next
+    #    `read`/`eval` crashed with "Cannot read properties of null (reading 'contexts')".
+    #    Root cause: getTab's knock fails → reviveIfHalfDead() sets browser=null and its fresh
+    #    connect times out → it returned false leaving browser null, and getTab walked straight
+    #    into pickContext()'s browser.contexts(). Three things must hold to close this:
+    src = (ROOT / "engine.js").read_text()
+    # 1) a failed revive marks the engine degraded so the caller routes to the fallback
+    revive = src[src.index("async function reviveIfHalfDead("):src.index("function needsFallbackError(")]
+    assert "reconnectFailed = true;" in revive, "a failed revive must set reconnectFailed"
+    # 2) getTab guards against a null browser instead of dereferencing it, and signals fallback
+    assert "function needsFallbackError(" in src
+    assert "if (!browser) {" in src and "throw needsFallbackError();" in src, \
+        "getTab must guard a null browser before pickContext, not crash on .contexts()"
+    # 3) act() catches the sentinel and reroutes to the raw-CDP fallback (not a 500 crash)
+    assert "e.needsFallback" in src and "return actViaRawCDP(cmd, tab)" in src, \
+        "act() must reroute a needsFallback signal to the raw-CDP fallback"
+
+
 def test_fallback_is_not_one_way_playwright_recovery_clears_the_flag():
     # 🔴 Reported 2026-09-06 (idifference): on a machine where the playwright connection comes
     #    and goes (intermittent), the engine dropped to the raw-CDP fallback (reconnectFailed=
