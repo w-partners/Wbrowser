@@ -5,6 +5,25 @@ has the detail.
 
 ---
 
+## 0.17.5 — 2026-09-06
+
+### Playwright 1.63 — attach to Chrome 152+
+
+On a machine running Chrome 152, `connectOverCDP` timed out on the initial attach — even a fresh
+profile with four tabs, even pure `playwright-core` with no engine involved. The CDP round trips
+all completed (every command got its reply); Playwright itself waited for something after attaching
+and never finished. The cause was a version gap: Playwright 1.62.1 bundles and is validated against
+Chrome **151**, and Chrome had moved on to **152**. Playwright 1.63 bundles Chrome **153**, so 152
+is back inside its supported range.
+
+Bumped the `playwright` dependency to `^1.63.0`. This is the fix for "the agent can't attach to my
+Chrome" on up-to-date Chrome installs. Reported and diagnosed 2026-09-06 (idifference), who ruled
+out every other candidate with a clean-profile control (it was not utility-world buildup, not tab
+restoration, not an extension — the protocol trace was clean and only Playwright hung). To pick it
+up on an existing clone: `git pull && npm install`.
+
+---
+
 ## 0.17.4 — 2026-09-06
 
 ### Fix: a disconnect landing mid-attach no longer crashes on a null browser
