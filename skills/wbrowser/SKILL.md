@@ -304,6 +304,15 @@ wb login example.com --confirm  # …and clicks submit (first time per site need
 - The vault is unlocked once per engine start (the user enters the master passphrase); a
   `wb down; wb up` re-locks it.
 
+🔵 **You often don't need to call `wb login` at all.** Once a credential is stored and the vault
+is unlocked, a login form fills **automatically** the moment you land on one: any `go`/`read`
+that shows a visible password field for a site you have a credential for is filled for you, and
+the reply carries an `autologin` note (`{origin, submitted, needsConfirm}`). So you just `go` to
+the page and keep working — the login wall no longer stops you. Submit stays gated the same way
+(the first time per site waits for a `wb login <site> --confirm`). It only fires when the vault
+is unlocked and a credential exists for that exact origin; otherwise nothing happens. Opt out of
+the auto-fill for one command with `--no-autologin` if you need the raw login page untouched.
+
 ## Remembering which site is for which task
 
 A small **local** memory so you don't have to be told the site every time. Record the site you

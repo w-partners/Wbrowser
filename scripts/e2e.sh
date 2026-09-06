@@ -73,7 +73,9 @@ WBROWSER_PROFILE_DIR="$PROFILE" WBROWSER_CDP_PORT="$PORT_CDP" WBROWSER_HEADLESS=
     WBROWSER_PROFILE_DIR=$PROFILE WBROWSER_CDP_PORT=$PORT_CDP WBROWSER_HEADLESS=1 node launch.js"
 
 printf '· Starting the engine on port %s\n' "$PORT_ENGINE"
+CRED_FILE="$(mktemp -u --suffix=.enc)"   # throwaway vault for the autologin check
 WBROWSER_CDP_PORT="$PORT_CDP" WBROWSER_PORT="$PORT_ENGINE" WIN_AGENT="$AGENT" \
+  WBROWSER_CRED_FILE="$CRED_FILE" WBROWSER_CRED_AUDIT="$(mktemp -u)" \
   node engine.js >/dev/null 2>&1 &
 
 for _ in $(seq 1 25); do
@@ -258,6 +260,15 @@ node -e '
       res.end("<!doctype html><html><head><title>Missing</title></head><body>gone</body></html>");
       return;
     }
+    if (req.url === "/login") {
+      // A login form — a visible password field is the signal that auto-fill keys on.
+      res.writeHead(200, {"Content-Type": "text/html"});
+      res.end("<!doctype html><html><head><title>Sign in</title></head><body><h1>Sign in</h1>"
+            + "<form><input name=\"username\" type=\"text\" placeholder=\"Email\">"
+            + "<input name=\"password\" type=\"password\" placeholder=\"Password\">"
+            + "<button type=\"submit\">Sign in</button></form></body></html>");
+      return;
+    }
     res.writeHead(200, {"Content-Type": "text/html"});
     res.write("<!doctype html><html><head><title>Slow</title></head><body>"
             + "<h1>Slow Page</h1><p>usable</p>");
@@ -292,6 +303,20 @@ check "and the error names the tab and the fix"          "$E" \
 H=$(act '{"goto":"http://127.0.0.1:'"$PORT_SLOW"'/404","read":true,"agent":"'"$AGENT"'","tab":"h4"}')
 check "goto with a real HTTP response does not TDZ-crash" "$H" "not d.get('error')"
 check "and the 4xx status is surfaced, not swallowed"      "$H" "d.get('httpStatus') == 404"
+
+# 🔵 Auto-login: when a login form appears for a site whose credential is stored, the engine
+#    fills it without a separate `wb login` call (requested 2026-09-06). Enroll a throwaway
+#    credential, then just goto+read the login page and check it filled — and that the secret
+#    never came back in the reply (the AI must not see it).
+ORIGIN="http://127.0.0.1:$PORT_SLOW"
+act '{"cred_unlock":"e2e-master-pass"}' >/dev/null 2>&1 || true
+curl -s -X POST "http://127.0.0.1:$PORT_ENGINE/cred/unlock" -H 'Content-Type: application/json' -d '{"passphrase":"e2e-master-pass"}' >/dev/null
+curl -s -X POST "http://127.0.0.1:$PORT_ENGINE/cred/enroll" -H 'Content-Type: application/json' -d '{"origin":"'"$ORIGIN"'","username":"e2e@example.com","password":"E2E_SECRET_PW"}' >/dev/null
+A=$(act '{"goto":"'"$ORIGIN"'/login","read":true,"agent":"'"$AGENT"'","tab":"login"}')
+check "a login form auto-fills when a credential is stored" "$A" "isinstance(d.get('autologin'), dict)"
+check "and the stored secret never comes back in the reply" "$A" "'E2E_SECRET_PW' not in json.dumps(d)"
+V=$(act '{"eval":"document.querySelector(\"input[type=password]\").value.length","agent":"'"$AGENT"'","tab":"login"}')
+check "and the password field was actually filled"          "$V" "isinstance(d.get('result'), int) and d['result'] > 0"
 
 # 🔵 By port, never by name.
 slow_pid=$(ss -ltnp 2>/dev/null | grep ":$PORT_SLOW " | grep -oP 'pid=\K[0-9]+' | head -1)

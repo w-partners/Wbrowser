@@ -141,4 +141,7 @@ if __name__ == "__main__":
     tab = os.environ.get("WIN_TAB", "").strip()
     if tab and "tab" not in cmd:
         cmd["tab"] = tab
+    # 🔵 --no-autologin (parsed in wb) turns off the automatic login auto-fill for this command.
+    if os.environ.get("WIN_NO_AUTOLOGIN", "").strip():
+        cmd["noAutologin"] = True
     print(json.dumps(cmd, ensure_ascii=False))

@@ -5,6 +5,31 @@ has the detail.
 
 ---
 
+## 0.17.0 — 2026-09-06
+
+### Logins fill themselves — you don't have to call `wb login` anymore
+
+Before, a stored credential only got used when you explicitly ran `wb login <site>`. Now, once a
+credential is stored and the vault is unlocked, a login form **fills automatically the moment you
+land on one**: any `go`/`read` that shows a visible password field for a site you have a
+credential for is filled for you, and the reply carries an `autologin` note. So the agent just
+navigates to the page and keeps going — the login wall no longer stops it. This is the behaviour
+requested 2026-09-06 ("clicking a login should fill it even though the agent doesn't know the
+password").
+
+- Fires **only** when the vault is unlocked, a credential exists for that exact origin, and a
+  visible password field is present. Otherwise nothing happens — no guessing, no touching a page
+  that did not ask for it.
+- The AI never sees the secret (it goes value→field over CDP). Submit stays gated exactly as
+  before (first login per site waits for `--confirm`). Field detection still refuses rather than
+  guess.
+- Opt out per command with `--no-autologin` when you want the raw login page untouched.
+- Internally, `/cred/login` and the auto-fill now share one `fillLogin()` — one definition of how
+  a login is filled. e2e verifies the auto-fill: a stored credential fills the form, the password
+  field ends up populated, and the secret never comes back in the reply.
+
+---
+
 ## 0.16.1 — 2026-09-05
 
 ### Docs: the MCP-registration note is now in all four README languages

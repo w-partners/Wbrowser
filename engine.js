@@ -834,6 +834,88 @@ async function actViaRawCDP(cmd, tab) {
   }
 }
 
+// Fill a login form on `page` for `origin` using the stored `entry`. Shared by the explicit
+// /cred/login endpoint AND the automatic autofill below, so "how a login is filled" lives in
+// ONE place. 🔴 The secret goes value->field over CDP and is never returned. Field detection
+// REFUSES rather than guess (loginfields.choose throws). Submit is gated: confirmed once per
+// site, then remembered. Returns a plain result object; the caller shapes the HTTP reply.
+async function fillLogin(page, origin, entry, { confirmSubmit = false } = {}) {
+  const candidates = await page.evaluate(() => {
+    const out = []; let n = 0;
+    const push = (el, tag) => {
+      const r = el.getBoundingClientRect();
+      const visible = !!(r.width && r.height) && el.offsetParent !== null && !el.disabled;
+      out.push({
+        ref: 'f' + (n++), tag, type: (el.type || '').toLowerCase(),
+        name: (el.name || '').toLowerCase(), id: (el.id || '').toLowerCase(),
+        autocomplete: (el.getAttribute('autocomplete') || '').toLowerCase(),
+        placeholder: (el.placeholder || '').toLowerCase(),
+        ariaLabel: (el.getAttribute('aria-label') || '').toLowerCase(),
+        text: (el.innerText || el.value || '').slice(0, 40),
+        visible,
+      });
+      el.setAttribute('data-wb-ref', out[out.length - 1].ref);
+    };
+    document.querySelectorAll('input').forEach((el) => push(el, 'input'));
+    document.querySelectorAll('button,[role=button],input[type=submit]').forEach((el) => push(el, 'button'));
+    return out;
+  });
+  let picked;
+  try {
+    picked = loginfields.choose(candidates);
+  } catch (e) {
+    credaudit.append(CRED_AUDIT_FILE, {
+      ts: new Date().toISOString(), action: 'refused', origin, note: e.message,
+    });
+    return { error: e.message, status: 422 };
+  }
+  const typeInto = async (ref, value) => {
+    if (!ref) return;
+    await page.fill(`[data-wb-ref="${ref}"]`, value);
+  };
+  if (picked.username && entry.username) await typeInto(picked.username, entry.username);
+  await typeInto(picked.password, entry.password);
+  credaudit.append(CRED_AUDIT_FILE, {
+    ts: new Date().toISOString(), action: 'autologin', origin, user: entry.username, field: 'password',
+  });
+  const remembered = credSubmitPolicy.get(origin);
+  const shouldSubmit = remembered === 'always' || (remembered === undefined && confirmSubmit === true);
+  if (confirmSubmit === true && remembered === undefined) credSubmitPolicy.set(origin, 'always');
+  let submitted = false;
+  if (shouldSubmit && picked.submit) {
+    await page.click(`[data-wb-ref="${picked.submit}"]`).catch(() => {});
+    submitted = true;
+    credaudit.append(CRED_AUDIT_FILE, { ts: new Date().toISOString(), action: 'submit', origin });
+  }
+  return { ok: true, filled: true, submitted, needsConfirm: !shouldSubmit && !!picked.submit };
+}
+
+// Automatically fill a login the moment an agent's own page shows a login form for a site whose
+// credential is stored — this is the "you don't call wb login, it just happens" behaviour
+// (requested 2026-09-06). 🔵 It runs ONLY when: the vault is unlocked, a credential exists for
+// this exact origin, a visible password field is present (i.e. you are NOT already logged in),
+// and the caller did not opt out. Otherwise it does nothing and says nothing — no guessing, no
+// side effects on a page that did not ask for it. The secret is never seen by the AI.
+async function maybeAutofillLogin(page, cmd, summary) {
+  if (cmd && cmd.noAutologin) return null;         // explicit opt-out
+  if (!credPassphrase) return null;                // vault locked → nothing to autofill with
+  // A login form is present only if a visible password field is in the summary.
+  const hasPasswordField = summary && Array.isArray(summary.inputs)
+    && summary.inputs.some((f) => (f.type || '').toLowerCase() === 'password');
+  if (!hasPasswordField) return null;              // already logged in, or not a login page
+  let origin;
+  try { origin = new URL(summary.url || '').origin; } catch { return null; }
+  let entry;
+  try {
+    entry = vault.loadPayload(CRED_VAULT_FILE, credPassphrase).sites[origin];
+  } catch { return null; }
+  if (!entry) return null;                          // no credential for this site — leave it
+  // Submit stays gated by the same per-site policy; first time waits for an explicit confirm.
+  const r = await fillLogin(page, origin, entry, { confirmSubmit: false }).catch(() => null);
+  if (!r || r.error) return null;                   // detection refused → do not force it
+  return { origin, submitted: r.submitted, needsConfirm: r.needsConfirm };
+}
+
 async function act(cmd) {
   const unknown = Object.keys(cmd || {}).filter((k) => !KNOWN_KEYS.has(k));
   if (unknown.length) {
@@ -1180,6 +1262,16 @@ async function act(cmd) {
       result.readError = summary._failed;
     } else {
       result.page = summary;
+      // 🔵 The moment a login form appears for a site whose credential is stored, fill it —
+      //    so the agent does not have to stop at the login wall and call `wb login` by hand
+      //    (requested 2026-09-06). Only fires when the vault is unlocked, a credential exists
+      //    for this exact origin, and a visible password field is present. Does nothing
+      //    otherwise. The AI never sees the secret; submit stays gated. Failure here must not
+      //    fail the read, so it is swallowed.
+      try {
+        const af = await maybeAutofillLogin(page, cmd, summary);
+        if (af) result.autologin = af;   // { origin, submitted, needsConfirm }
+      } catch { /* autofill is a convenience; never let it break the read */ }
     }
   }
   if (cmd.shot) {
@@ -1338,68 +1430,9 @@ const server = http.createServer(async (req, res) => {
         return res.end(JSON.stringify({ error: `no credential stored for ${origin} — enroll it first` }));
       }
       const page = await getTab(body.tab || 'main', null, false, agent);
-      // Gather visible field descriptors (identity only — never values) and choose the fields.
-      const candidates = await page.evaluate(() => {
-        const out = []; let n = 0;
-        const push = (el, tag) => {
-          const r = el.getBoundingClientRect();
-          const visible = !!(r.width && r.height) && el.offsetParent !== null && !el.disabled;
-          out.push({
-            ref: 'f' + (n++), tag, type: (el.type || '').toLowerCase(),
-            name: (el.name || '').toLowerCase(), id: (el.id || '').toLowerCase(),
-            autocomplete: (el.getAttribute('autocomplete') || '').toLowerCase(),
-            placeholder: (el.placeholder || '').toLowerCase(),
-            ariaLabel: (el.getAttribute('aria-label') || '').toLowerCase(),
-            text: (el.innerText || el.value || '').slice(0, 40),
-            visible,
-          });
-          el.setAttribute('data-wb-ref', out[out.length - 1].ref);
-        };
-        document.querySelectorAll('input').forEach((el) => push(el, 'input'));
-        document.querySelectorAll('button,[role=button],input[type=submit]').forEach((el) => push(el, 'button'));
-        return out;
-      });
-      let picked;
-      try {
-        picked = loginfields.choose(candidates);
-      } catch (e) {
-        credaudit.append(CRED_AUDIT_FILE, {
-          ts: new Date().toISOString(), action: 'refused', origin, note: e.message,
-        });
-        res.statusCode = 422;
-        return res.end(JSON.stringify({ error: e.message }));
-      }
-      // Type the values straight into the fields by their marker. The secret never leaves here.
-      const typeInto = async (ref, value) => {
-        if (!ref) return;
-        const sel = `[data-wb-ref="${ref}"]`;
-        await page.fill(sel, value);
-      };
-      if (picked.username && entry.username) await typeInto(picked.username, entry.username);
-      await typeInto(picked.password, entry.password);
-      credaudit.append(CRED_AUDIT_FILE, {
-        ts: new Date().toISOString(), action: 'autologin', origin,
-        user: entry.username, field: 'password',
-      });
-      // Submit gating: confirm on first use per site, then remember.
-      const remembered = credSubmitPolicy.get(origin);
-      const shouldSubmit = remembered === 'always'
-        || (remembered === undefined && body.confirmSubmit === true);
-      if (body.confirmSubmit === true && remembered === undefined) {
-        credSubmitPolicy.set(origin, 'always');   // the user approved — remember it
-      }
-      let submitted = false;
-      if (shouldSubmit && picked.submit) {
-        await page.click(`[data-wb-ref="${picked.submit}"]`).catch(() => {});
-        submitted = true;
-        credaudit.append(CRED_AUDIT_FILE, {
-          ts: new Date().toISOString(), action: 'submit', origin,
-        });
-      }
-      return res.end(JSON.stringify({
-        ok: true, filled: true, submitted,
-        needsConfirm: !shouldSubmit && !!picked.submit,
-      }));
+      const r = await fillLogin(page, origin, entry, { confirmSubmit: body.confirmSubmit === true });
+      if (r.error) { res.statusCode = r.status || 500; return res.end(JSON.stringify({ error: r.error })); }
+      return res.end(JSON.stringify(r));
     }
     // --- local site memory (which site for which task). Local file only; never sent to an LLM.
     if (req.method === 'POST' && req.url === '/memory/remember') {

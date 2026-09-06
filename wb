@@ -186,6 +186,7 @@ AGENT_NAME="$(_agent_name)"
 
 _json() {
   WIN_ACCOUNT_RESOLVED="$ACCOUNT" WIN_AGENT="$AGENT_NAME" WIN_TAB="$TAB" \
+    WIN_NO_AUTOLOGIN="${NO_AUTOLOGIN:-}" \
     python3 "$DIR/mkcmd.py" "$@"
 }
 
@@ -277,6 +278,9 @@ while [ $# -gt 0 ]; do
     --agent=*)    AGENT_OVERRIDE="${1#--agent=}"; shift ;;
     --browser|-b) shift 2 || shift ;;   # already read in the pre-scan above
     --browser=*)  shift ;;
+    # 🔵 Turn off the automatic login auto-fill for this one command — when you want the raw
+    #    login page untouched. Auto-fill is on by default (see SKILL); this opts out.
+    --no-autologin) NO_AUTOLOGIN=1; shift ;;
     *) ARGS+=("$1"); shift ;;
   esac
 done
