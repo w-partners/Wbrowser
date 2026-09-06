@@ -108,6 +108,12 @@ returns both.
 
 ### When `read` times out but the page is fine
 
+🔵 **First, since v0.17.1, try the command again.** A half-dead browser socket (the websocket
+went one-way dead — common across a network boundary; the symptom is "the first `go` works, then
+every command times out") now heals itself: the engine notices, reconnects once on a fresh socket,
+and the message says so ("Reconnected automatically … just run the command again"). You restart
+nothing. Only if a **retry** still times out is it the case below.
+
 If `read` times out and the message says Chrome answers raw CDP instantly, the page is
 not the problem — playwright cannot reach its execution context. **First restart the
 engine — `wb down && wb up`.** The stale connection often lives in the engine's playwright
