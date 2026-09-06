@@ -163,6 +163,48 @@ async function reviveIfHalfDead(hung) {
   } catch { return false; }
 }
 
+// 🔴 Reported 2026-09-06 (idifference): the raw-CDP fallback was a ONE-WAY door. Once
+//    reconnectFailed is set, act() returns actViaRawCDP before ever calling connect() — and
+//    connect() is the only place that clears the flag. So on a machine where the playwright
+//    connection is intermittent (it died once, then recovered), the engine stayed stuck in the
+//    fallback forever: every command ran raw CDP, which cannot open a tab, so `no tab stamped`
+//    blocked everything even though playwright was answering again.
+//
+//    So before taking the fallback, try to climb back out: attempt a fresh connect. connect()
+//    skips its reconnect branch while reconnectFailed is set, but a plain connectOverCDP on a
+//    null handle is exactly what we want here — if playwright has recovered it returns fast and
+//    we clear the flag and rejoin the normal path; if it is still dead it times out and we fall
+//    through to the fallback as before. This runs ONLY while reconnectFailed is set (already the
+//    degraded state), so the normal path pays nothing. One attempt, bounded by connect()'s own
+//    wall-clock guard, and reconnecting keeps concurrent callers from each trying.
+async function tryRecoverFromFallback() {
+  if (!reconnectFailed || reconnecting) return false;
+  // If Chrome is not even answering raw CDP, playwright will not connect either — skip the
+  // (bounded but non-zero) attempt and let the fallback's own probe report the dead Chrome.
+  if (!await rawCdpAlive()) return false;
+  reconnecting = true;
+  try {
+    // Drop any stale handle so connect() actually re-attaches instead of trusting isConnected()
+    // on a corpse (the half-dead case). A fresh socket is the only proof playwright is back.
+    if (browser) { const b = browser; b.close().catch(() => {}); }
+    browser = null; ctx = null; tabs.clear();
+  } finally {
+    reconnecting = false;
+  }
+  try {
+    browser = await connectOverCDPBounded();
+  } catch { return false; }                            // still dead — caller uses the fallback
+  // Same wiring connect() does on a successful attach, and clear the flag so act() rejoins the
+  // normal (playwright) path from here on.
+  ctx = browser.contexts()[0];
+  if (!ctx) { browser = null; return false; }
+  tabs.clear();
+  browser.on('disconnected', () => { browser = null; ctx = null; tabs.clear(); });
+  reconnectFailed = false;
+  console.error(`[recover] ${new Date().toISOString()} playwright reconnected — leaving the raw-CDP fallback`);
+  return true;
+}
+
 // The CDP connection can drop (Chrome quits / restarts). Check on every request
 // whether it is still alive and reattach if it died — so we never fail silently
 // on a dead handle.
@@ -992,6 +1034,10 @@ async function act(cmd) {
   //    websocket, which stays responsive when playwright's does not (measured 2026-09-04,
   //    zalman). This is the thin fallback: goto/eval/shot/press/read map 1:1; click is
   //    best-effort by coordinate. A newtab/newwindow needs playwright, so those still error.
+  // 🔵 Before dropping to the raw-CDP fallback, try to climb out of it: if playwright has
+  //    recovered (intermittent connection), reconnect and rejoin the normal path. Runs only
+  //    while reconnectFailed is set, so the healthy path never pays for it. (idifference 2026-09-06)
+  if (reconnectFailed) { await tryRecoverFromFallback(); }
   if (reconnectFailed && !cmd.newtab && !cmd.newwindow) {
     return actViaRawCDP(cmd, tab);
   }

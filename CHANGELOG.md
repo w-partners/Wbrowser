@@ -5,6 +5,35 @@ has the detail.
 
 ---
 
+## 0.17.2 — 2026-09-06
+
+### The raw-CDP fallback is no longer a one-way door
+
+When Playwright's connection dies, the engine drops to a thin raw-CDP fallback to keep serving
+commands. But the flag that marks that state (`reconnectFailed`) was only ever cleared inside
+`connect()` — and while it was set, the engine returned the fallback *before* calling `connect()`.
+So once it fell in, it never climbed out: on a machine where the connection is intermittent (it
+died once, then recovered), every command kept running raw CDP, which cannot open a tab, so
+`no tab stamped` blocked everything even though Playwright was answering again.
+
+Now, before taking the fallback, the engine tries to climb out: if Playwright has recovered it
+reconnects and rejoins the normal path, clearing the flag. This runs **only while the engine is
+already in the degraded state**, so the healthy path pays nothing. Reported 2026-09-06
+(idifference), verified with a hermetic unit test that drives the real recovery function against
+fake dependencies — no browser needed.
+
+### `wb -b <name> logs` now shows that browser's log, not the default one
+
+A named browser (`-b work`) runs its engine on its own port, but the log path ignored `-b`: every
+browser wrote to and read from the same `engine.log`. So a problem on the named browser's engine
+was invisible in `wb -b <name> logs`, which showed the default browser's log — "the log is empty"
+and "it never happened" became indistinguishable, exactly when you are debugging. Each named
+browser now gets its own `engine-<name>.log` (the name sanitised for the path); the default
+browser keeps the plain `engine.log`, so nothing watching that file is disturbed. Reported
+2026-09-06 (idifference).
+
+---
+
 ## 0.17.1 — 2026-09-06
 
 ### A half-dead browser socket now recovers by itself — no more "one goto per engine restart"

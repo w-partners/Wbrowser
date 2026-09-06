@@ -88,7 +88,22 @@ _state_dir() {
   esac
 }
 mkdir -p "$(_state_dir)" 2>/dev/null
-LOG="$(_state_dir)/engine.log"
+# 🔴 The log must follow the browser, exactly as the ports do. Reported 2026-09-06
+#    (idifference): `-b profile4` runs its engine on a different port, but the log path
+#    ignored -b, so every browser wrote to and read from the same engine.log. A fallback
+#    that happened on profile4's engine (7804) was invisible in `wb -b profile4 logs`,
+#    which showed the default (9222) log — so "the log is empty" and "it never happened"
+#    became indistinguishable, which is a silent failure at the exact moment you are
+#    debugging. The port is per-browser; the log has to be too.
+#    The default browser keeps the plain `engine.log` name so anyone watching that file
+#    (and any older mixed-in lines) is undisturbed; only a named -b gets its own file.
+if [ -n "$BROWSER" ]; then
+  # Sanitise the name for a filename — a browser name is user text (could contain / or spaces).
+  _logslug="$(printf '%s' "$BROWSER" | tr -c 'A-Za-z0-9._-' '_')"
+  LOG="$(_state_dir)/engine-${_logslug}.log"
+else
+  LOG="$(_state_dir)/engine.log"
+fi
 
 # 🔴 A fresh clone has no node_modules, and every command here talks to an engine
 #    over HTTP — so if someone else's engine happens to be on the port, a clone that

@@ -187,6 +187,50 @@ def test_rawcdp_attach_probes_for_a_live_tab():
     assert "no live page target" in raw
     assert "Runtime.evaluate" in raw and "1500" in raw   # short liveness probe
 
+def test_wb_log_path_follows_the_browser(tmp_path):
+    # 🔴 Reported 2026-09-06 (idifference): `-b <name>` runs its engine on a different port, but
+    #    the log path ignored -b — every browser wrote to and read from the same engine.log. A
+    #    fallback that happened on the named browser's engine was invisible in `wb -b <name> logs`
+    #    (it showed the default log), so "the log is empty" and "it never happened" became
+    #    indistinguishable — a silent failure at the exact moment you are debugging. The default
+    #    keeps the plain name; a named browser gets its own file; the name is sanitised for a path.
+    wb = ROOT / "wb"
+
+    def logpath(*args):
+        r = subprocess.run(["bash", str(wb), *args, "logs"],
+                           env={**os.environ, "WBROWSER_STATE_DIR": str(tmp_path)},
+                           capture_output=True, text=True, timeout=30)
+        for tok in (r.stdout + r.stderr).split():
+            if tok.endswith(".log"):
+                return tok
+        return ""
+
+    assert logpath().endswith("/engine.log"), "default browser keeps the plain engine.log"
+    assert logpath("-b", "work").endswith("/engine-work.log"), "named browser gets its own file"
+    # a browser name is user text — it must not escape into a path
+    assert logpath("-b", "a/b c").endswith("/engine-a_b_c.log"), "name not sanitised for the path"
+
+
+def test_fallback_is_not_one_way_playwright_recovery_clears_the_flag():
+    # 🔴 Reported 2026-09-06 (idifference): on a machine where the playwright connection comes
+    #    and goes (intermittent), the engine dropped to the raw-CDP fallback (reconnectFailed=
+    #    true) during one dead spell — and then never came back, because the ONLY place that
+    #    clears reconnectFailed is inside connect(), and act() skips connect() entirely while
+    #    reconnectFailed is set (it returns actViaRawCDP first). So once trapped in the
+    #    fallback, a recovered playwright could not lift the engine out: every command ran raw
+    #    CDP, which cannot open a new tab, so `no tab stamped` blocked everything. The fallback
+    #    entry was one-way. It must first try to recover playwright and clear the flag; only if
+    #    that still fails does it use the fallback.
+    src = (ROOT / "engine.js").read_text()
+    assert "async function tryRecoverFromFallback(" in src, "no recovery attempt before the fallback"
+    # the recovery is attempted at the fallback gate, before actViaRawCDP is returned
+    fb = src.index("if (reconnectFailed && !cmd.newtab && !cmd.newwindow)")
+    recover = src.index("tryRecoverFromFallback(")
+    assert recover < fb, "recovery must be attempted BEFORE the fallback gate, not after"
+    # recovery clears the flag when a fresh connect succeeds
+    assert "reconnectFailed = false" in src
+
+
 def test_gettab_reconnects_when_knock_dies_but_raw_cdp_is_up():
     # 🔴 Reported 2026-09-06 (idifference): over a network boundary (Windows Chrome ↔ WSL2),
     #    a browser websocket goes half-dead AFTER a successful connect — the first goto works,
