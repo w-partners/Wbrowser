@@ -446,3 +446,24 @@ def test_goto_surfaces_http_error_status():
     # And it must be set AFTER result exists — i.e. not the old inline read that crashed.
     assert re.search(r"const result = \{[^}]*\}[\s\S]*result\.httpStatus\s*=", src), \
         "httpStatus is assigned before result is declared (TDZ risk)"
+
+
+def test_rawcdp_fallback_is_a_complete_path_not_read_only():
+    # 🔴 Reported 2026-09-08 (zalman): playwright 1.63 ↔ Chrome 152 mismatch hangs connectOverCDP;
+    #    raw CDP is fine, so the fallback must become a COMPLETE path. Two gaps closed: it could
+    #    not open its own tab (→ "no tab stamped" on a fresh go) and could not type a string.
+    raw = (ROOT / "rawcdp.js").read_text()
+    # raw CDP can now create the tab it drives (browser-scoped Target.createTarget)
+    assert "async createTab(" in raw and "Target.createTarget" in raw
+    assert "Target.attachToTarget" in raw, "createTab must attach so later sends target the new tab"
+    assert "getBrowserWs(" in raw, "createTarget is browser-scoped — connect to the browser ws"
+    # raw CDP can type a whole string, not just single keys
+    assert "async type(" in raw and "Input.insertText" in raw
+    # act() routes a navigating fallback command through createTab when no tab exists, and
+    # sends cmd.type to raw.type
+    eng = (ROOT / "engine.js").read_text()
+    fb = eng[eng.index("async function actViaRawCDP("):eng.index("async function fillLogin(")]
+    assert "raw.createTab(" in fb, "actViaRawCDP does not open a tab when none exists"
+    assert "raw.type(" in fb, "actViaRawCDP does not route cmd.type to raw CDP"
+    # a non-navigating command on no tab still fails honestly (does not conjure a blank tab)
+    assert "throw e;" in fb, "a fallback eval/read with no tab must still error, not open a blank"

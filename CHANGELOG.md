@@ -5,6 +5,36 @@ has the detail.
 
 ---
 
+## 0.18.0 — 2026-09-08
+
+### Raw CDP is now a complete path — the engine keeps working when Playwright can't attach
+
+On Chrome 152, Playwright's `connectOverCDP` hangs on the initial attach (it waits forever on
+`Target.setAutoAttach → Runtime.enable` replay). This was confirmed by a decisive control
+(zalman 2026-09-08): the same Playwright 1.63 times out against **two different** Chrome 152
+instances, while raw CDP opens the browser websocket in ~300ms and answers `Browser.getVersion`.
+So the fault is the Playwright↔Chrome-152 pairing, not the browser, the tabs, an extension, or the
+WSL2 boundary — and bumping Playwright doesn't help (1.63 is the latest and it's what fails).
+
+The engine already fell back to raw CDP when `connectOverCDP` timed out, but that lane was
+read-only-ish: it could not open its own tab (so a fresh `go` failed with `no tab stamped`) and
+could not type a string. Both gaps are now closed:
+
+- **`createTab`** opens a tab over raw CDP (`Target.createTarget` on the browser websocket, then
+  `attachToTarget`), including `--window` (`newWindow: true`). So a `go` with no existing tab works
+  on the fallback instead of dead-ending.
+- **`type`** sends the whole string via `Input.insertText`, not just single keys.
+
+With those in place the automatic fallback is a **complete** path: when `connectOverCDP` can't
+attach (Chrome 152), the engine serves `go`/`read`/`eval`/`shot`/`click`/`press`/`type`/new-tab
+over raw CDP with no manual switch. Playwright is still used where it attaches fine (other Chrome
+versions) and is the way back once the pairing is fixed upstream. Reported and diagnosed 2026-09-08
+(zalman, idifference). What raw CDP still lacks vs Playwright: selector actionability waits and
+per-keystroke re-render handling — acceptable for the sites tested (reels/card work ran clean on
+raw CDP), and the price of working at all on Chrome 152.
+
+---
+
 ## 0.17.6 — 2026-09-06
 
 ### A held engine port fails loudly, and `wb up` tells you when a stale engine is running

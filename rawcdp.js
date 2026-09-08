@@ -24,6 +24,14 @@ function getJSON(url) {
   });
 }
 
+// The browser-level WebSocket, from /json/version. Target.createTarget / attachToTarget are
+// browser-scoped commands (a page socket cannot open a new tab), so createTab connects here.
+async function getBrowserWs(cdpBase) {
+  const v = await getJSON(`${cdpBase}/json/version`);
+  if (!v || !v.webSocketDebuggerUrl) throw new Error('rawcdp: no browser webSocketDebuggerUrl in /json/version');
+  return v.webSocketDebuggerUrl;
+}
+
 // Close a page target by id over Chrome's HTTP endpoint (GET /json/close/<id>).
 // 🔴 This works even when the tab's renderer is hung: /json/* is served by the BROWSER
 //    process, not the renderer, so it answers when Page/Runtime on that tab time out.
@@ -257,6 +265,33 @@ class RawCDP {
     await this.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: b.x, y: b.y });
     await this.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: b.x, y: b.y, button: 'left', clickCount: 1 });
     await this.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: b.x, y: b.y, button: 'left', clickCount: 1 });
+  }
+
+  // 🔵 Open a NEW tab over raw CDP and attach to it. This is the one thing the fallback could
+  //    not do before (it only ever attached to EXISTING tabs), which is why a fresh `go` on the
+  //    fallback failed with "no tab stamped". With connectOverCDP hanging on Chrome 152 (zalman
+  //    2026-09-08: playwright 1.63 ↔ Chrome 152 mismatch, raw CDP fine), raw CDP has to be a
+  //    COMPLETE path, not a read-only lane — so it must be able to create the tab it drives.
+  //    `Target.createTarget` makes the tab; attaching to it (flatten:true → a sessionId) lets
+  //    every later send() target it. newWindow:true splits it into its own OS window (--window).
+  async createTab(url, { newWindow = false } = {}) {
+    const browserWs = await getBrowserWs(this.cdpBase);
+    await this._connect(browserWs);                 // the BROWSER endpoint owns Target.createTarget
+    const created = await this.send('Target.createTarget', { url: url || 'about:blank', newWindow: !!newWindow });
+    const targetId = created && created.targetId;
+    if (!targetId) throw new Error('rawcdp: Target.createTarget returned no targetId');
+    const att = await this.send('Target.attachToTarget', { targetId, flatten: true });
+    if (att && att.sessionId) this.sessionId = att.sessionId;
+    this.target = { id: targetId, type: 'page', webSocketDebuggerUrl: browserWs };
+    return targetId;
+  }
+
+  // 🔵 Type a whole string. `press` only does single keys (Enter/Tab); typing text needs this.
+  //    Input.insertText delivers the string in one round trip — faithful for plain fields and
+  //    far quicker than key-by-key. (A site that re-renders per keystroke is the rare case
+  //    playwright handled better; raw CDP trades that for working at all on Chrome 152.)
+  async type(text) {
+    await this.send('Input.insertText', { text: String(text == null ? '' : text) });
   }
 
   close() {

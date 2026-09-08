@@ -125,3 +125,49 @@ test('attach closes THIS agent’s hung tab and refuses to close a stranger’s'
     await new Promise((r) => server.close(r));
   }
 });
+
+// ── 생 CDP 주경로 승격 (2026-09-08): rawcdp 가 새 탭을 만들고 문자열을 입력할 수 있어야
+//    playwright 없이 완결된 경로가 된다. connectOverCDP 가 크롬 152 에서 매달리는 것을
+//    zalman 이 대조로 확정 — 생 CDP 는 311ms 에 붙는다. gap 은 탭 생성과 type 둘뿐이었다.
+
+// A RawCDP whose send() records calls instead of hitting a browser.
+function stubbedRawCDP(replies = {}) {
+  const r = new RawCDP('http://127.0.0.1:9222');
+  r.calls = [];
+  r.send = async (method, params) => {
+    r.calls.push({ method, params });
+    return (method in replies) ? replies[method] : {};
+  };
+  return r;
+}
+
+test('createTab uses Target.createTarget (raw CDP can open its own tab)', async () => {
+  const r = stubbedRawCDP({ 'Target.createTarget': { targetId: 'T1' } });
+  // stub attachToTarget → sessionId, and the ws connect so no real socket opens
+  r._connect = async () => {};
+  const id = await r.createTab('https://example.com');
+  const methods = r.calls.map((c) => c.method);
+  assert.ok(methods.includes('Target.createTarget'),
+    'createTab must open a tab via Target.createTarget, not depend on playwright');
+  assert.strictEqual(id, 'T1', 'returns the new targetId');
+  // the created target must carry the url so the tab lands where asked
+  const create = r.calls.find((c) => c.method === 'Target.createTarget');
+  assert.strictEqual(create.params.url, 'https://example.com');
+});
+
+test('createTab can open a background OS window (newWindow) for --window', async () => {
+  const r = stubbedRawCDP({ 'Target.createTarget': { targetId: 'T2' } });
+  r._connect = async () => {};
+  await r.createTab('https://example.com', { newWindow: true });
+  const create = r.calls.find((c) => c.method === 'Target.createTarget');
+  assert.strictEqual(create.params.newWindow, true);
+});
+
+test('type sends the whole string, not just one key', async () => {
+  const r = stubbedRawCDP();
+  await r.type('hello');
+  // Input.insertText carries the whole string in one call — the fast, faithful path.
+  const insert = r.calls.find((c) => c.method === 'Input.insertText');
+  assert.ok(insert, 'type must send Input.insertText with the text');
+  assert.strictEqual(insert.params.text, 'hello');
+});

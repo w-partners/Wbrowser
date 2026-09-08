@@ -952,9 +952,27 @@ async function actViaRawCDP(cmd, tab) {
   const raw = new RawCDP(CDP);
   try {
     // Match the page by the tab stamp the engine wrote into its title ("[b-id] agent ...").
-    await raw.attach(cmd.agent ? `${cmd.agent}` : null);
-    if (cmd.goto) { const u = await raw.goto(cmd.goto); done.push(`goto ${cmd.goto}`); result.url = u; }
+    // 🔵 If no live tab exists for this agent, a navigating command opens its own — raw CDP can
+    //    now create the tab (createTab), so the fallback is a COMPLETE path, not read-only. A
+    //    command with nothing to navigate to (eval/read/click alone) still needs an existing tab.
+    let openedTab = false;
+    try {
+      await raw.attach(cmd.agent ? `${cmd.agent}` : null);
+    } catch (e) {
+      if ((cmd.goto || cmd.newtab || cmd.newwindow)) {
+        // createTab opens the URL as it makes the tab, so a following goto to the same URL is
+        // redundant — mark it so we settle instead of navigating twice.
+        await raw.createTab(cmd.goto || 'about:blank', { newWindow: !!cmd.newwindow });
+        done.push(cmd.newwindow ? 'newwindow' : 'newtab');
+        openedTab = true;
+      } else {
+        throw e;   // no tab and nothing opens one — the honest "run go first" error stands
+      }
+    }
+    if (cmd.goto && !openedTab) { const u = await raw.goto(cmd.goto); done.push(`goto ${cmd.goto}`); result.url = u; }
+    else if (cmd.goto) { result.url = await raw.evaluate('location.href').catch(() => cmd.goto); }
     if (cmd.click) { await raw.click(cmd.click); done.push(`click ${cmd.click}`); }
+    if (cmd.type) { await raw.type(cmd.type.text != null ? cmd.type.text : cmd.type); done.push('type'); }
     if (cmd.press) { await raw.press(cmd.press); done.push(`press ${cmd.press}`); }
     if (cmd.eval) { result.result = await raw.evaluate(cmd.eval); done.push('eval'); }
     if (cmd.read || cmd.goto || cmd.click) {
