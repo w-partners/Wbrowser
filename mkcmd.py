@@ -144,4 +144,11 @@ if __name__ == "__main__":
     # 🔵 --no-autologin (parsed in wb) turns off the automatic login auto-fill for this command.
     if os.environ.get("WIN_NO_AUTOLOGIN", "").strip():
         cmd["noAutologin"] = True
+    # 🔵 --scope (parsed in wb, comma-joined) limits auto-fill to these origins. Split back into
+    #    a list; blanks dropped. Empty → key omitted, which the engine reads as unrestricted.
+    scope = os.environ.get("WIN_SCOPE", "").strip()
+    if scope:
+        origins = [s.strip() for s in scope.split(",") if s.strip()]
+        if origins:
+            cmd["scope"] = origins
     print(json.dumps(cmd, ensure_ascii=False))

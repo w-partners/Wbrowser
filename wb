@@ -201,7 +201,7 @@ AGENT_NAME="$(_agent_name)"
 
 _json() {
   WIN_ACCOUNT_RESOLVED="$ACCOUNT" WIN_AGENT="$AGENT_NAME" WIN_TAB="$TAB" \
-    WIN_NO_AUTOLOGIN="${NO_AUTOLOGIN:-}" \
+    WIN_NO_AUTOLOGIN="${NO_AUTOLOGIN:-}" WIN_SCOPE="${SCOPE:-}" \
     python3 "$DIR/mkcmd.py" "$@"
 }
 
@@ -296,6 +296,12 @@ while [ $# -gt 0 ]; do
     # 🔵 Turn off the automatic login auto-fill for this one command — when you want the raw
     #    login page untouched. Auto-fill is on by default (see SKILL); this opts out.
     --no-autologin) NO_AUTOLOGIN=1; shift ;;
+    # 🔵 Scoped access: limit auto-fill to these origins for this command. Repeatable, or
+    #    comma-separated. Outside the list a stored credential is NOT spent, even if present —
+    #    so a run that wanders onto another login page never fills it there.
+    #    e.g. wb go <url> --scope https://github.com --scope https://gitlab.com
+    --scope) SCOPE="${SCOPE:+$SCOPE,}$2"; shift 2 || shift ;;
+    --scope=*) SCOPE="${SCOPE:+$SCOPE,}${1#--scope=}"; shift ;;
     *) ARGS+=("$1"); shift ;;
   esac
 done

@@ -5,6 +5,28 @@ has the detail.
 
 ---
 
+## 0.19.0 — 2026-09-12
+
+### Scoped access — limit auto-fill to a task's own sites
+
+A stored credential used to auto-fill on any site it was saved for, whenever a login form
+appeared. Now a command can declare the origins it is allowed to fill on:
+
+```
+wb go https://github.com/login --scope https://github.com
+wb go <url> --scope https://github.com --scope https://gitlab.com   # repeatable, or comma-joined
+```
+
+Outside that scope, a stored credential is **not** spent — even if it exists — so a run that
+wanders onto some other login page never fills it there. This shrinks a credential's exposure to
+exactly the task that needs it (Aside's per-task credential scope). Matching is on the parsed
+origin: an entry allows its exact origin and any subdomain of its host, and a look-alike host
+(`evil-github.com`, `github.com.evil.com`) never matches `github.com` — no substring matches. No
+`--scope` given → unrestricted, exactly as before, so it is opt-in and reversible. The `scope`
+decision is a pure, unit-tested function (`originInScope`).
+
+---
+
 ## 0.18.0 — 2026-09-08
 
 ### Raw CDP is now a complete path — the engine keeps working when Playwright can't attach

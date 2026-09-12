@@ -918,6 +918,7 @@ const KNOWN_KEYS = new Set([
   'goto', 'click', 'type', 'press', 'read', 'shot', 'eval', 'wait',
   'console', 'errors', 'network', 'tab', 'account', 'agent', 'selector',
   'newtab', 'newwindow', 'fullPage', 'limit', 'filter',
+  'noAutologin', 'scope',
 ]);
 
 // 🔴 What is actually running here. Reported 2026-08-31: a fix was released, pulled,
@@ -1060,6 +1061,28 @@ async function fillLogin(page, origin, entry, { confirmSubmit = false } = {}) {
 // this exact origin, a visible password field is present (i.e. you are NOT already logged in),
 // and the caller did not opt out. Otherwise it does nothing and says nothing — no guessing, no
 // side effects on a page that did not ask for it. The secret is never seen by the AI.
+// 🔵 Scoped access (pure, unit-tested). Decide whether auto-fill is allowed on `origin` given a
+//    task's declared `scope`. No scope (undefined/null/empty) → allowed (unrestricted, the prior
+//    behaviour). A scope is a list of allowed origins; an entry matches either exactly, or as a
+//    parent that the origin is a subdomain of (so "https://example.com" covers
+//    "https://app.example.com"). Anything not matched is refused. Comparison is on the parsed
+//    origin, never a substring — "https://evil-github.com" must not match "https://github.com".
+function originInScope(origin, scope) {
+  if (!scope || (Array.isArray(scope) && scope.length === 0)) return true;   // unrestricted
+  const list = Array.isArray(scope) ? scope : [scope];
+  let host;
+  try { host = new URL(origin).host; } catch { return false; }
+  for (const s of list) {
+    let allowHost, allowOrigin;
+    try { const u = new URL(s); allowOrigin = u.origin; allowHost = u.host; }
+    catch { continue; }                            // a malformed scope entry matches nothing
+    if (origin === allowOrigin) return true;                       // exact origin match
+    if (host === allowHost) return true;                           // same host (scheme aside)
+    if (host.endsWith('.' + allowHost)) return true;               // subdomain of an allowed host
+  }
+  return false;
+}
+
 async function maybeAutofillLogin(page, cmd, summary) {
   if (cmd && cmd.noAutologin) return null;         // explicit opt-out
   if (!credPassphrase) return null;                // vault locked → nothing to autofill with
@@ -1069,6 +1092,12 @@ async function maybeAutofillLogin(page, cmd, summary) {
   if (!hasPasswordField) return null;              // already logged in, or not a login page
   let origin;
   try { origin = new URL(summary.url || '').origin; } catch { return null; }
+  // 🔵 Scoped access: a task may declare which origins it is allowed to auto-fill on
+  //    (cmd.scope = ["https://github.com", ...]). Outside that list we DO NOT fill, even when a
+  //    credential is stored — so a run that wanders onto some other login page never spends the
+  //    vault there. This shrinks the credential's exposure to exactly the task's own sites. No
+  //    scope given → unrestricted (the prior behaviour), so it is opt-in and reversible.
+  if (!originInScope(origin, cmd && cmd.scope)) return { origin, skipped: 'out-of-scope' };
   let entry;
   try {
     entry = vault.loadPayload(CRED_VAULT_FILE, credPassphrase).sites[origin];

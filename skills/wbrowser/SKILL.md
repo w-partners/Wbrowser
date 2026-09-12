@@ -319,6 +319,19 @@ the page and keep working — the login wall no longer stops you. Submit stays g
 is unlocked and a credential exists for that exact origin; otherwise nothing happens. Opt out of
 the auto-fill for one command with `--no-autologin` if you need the raw login page untouched.
 
+🔵 **Scope auto-fill to a task's own sites** with `--scope`. By default a stored credential fills
+whenever its login form appears; a scope limits that to origins you name, so a run that wanders
+onto another login page never spends a credential there:
+
+```
+wb go https://github.com/login --scope https://github.com
+wb go <url> --scope https://github.com --scope https://gitlab.com   # repeatable, or comma-joined
+```
+
+A scope entry allows its exact origin and any subdomain of its host; look-alikes never match
+(`evil-github.com` is not `github.com`). No `--scope` → unrestricted, as before. Use it when a
+task should only ever log into a known set of sites.
+
 ## Remembering which site is for which task
 
 A small **local** memory so you don't have to be told the site every time. Record the site you

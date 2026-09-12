@@ -262,3 +262,20 @@ def test_missing_arguments_print_usage_not_a_traceback():
         assert p.returncode != 0, f"{op} with no argument was accepted"
         assert "Usage:" in out, f"{op} did not say what it needs: {out[:120]}"
         assert "Traceback" not in out, f"{op} still shows a traceback"
+
+
+def test_scope_becomes_a_list_and_is_omitted_when_empty():
+    import subprocess, sys, json, os
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    def mk(env):
+        r = subprocess.run([sys.executable, os.path.join(root, "mkcmd.py"), "go", "https://github.com/login"],
+                           env={**os.environ, **env}, capture_output=True, text=True, timeout=15)
+        return json.loads(r.stdout)
+    # comma-joined WIN_SCOPE (as wb builds it) → a list on the command
+    got = mk({"WIN_SCOPE": "https://github.com,https://gitlab.com"})
+    assert got["scope"] == ["https://github.com", "https://gitlab.com"]
+    # no scope → key omitted (engine reads that as unrestricted)
+    assert "scope" not in mk({"WIN_SCOPE": ""})
+    assert "scope" not in mk({})
+    # blanks are dropped, not turned into empty origins
+    assert mk({"WIN_SCOPE": "https://a.com, ,https://b.com"})["scope"] == ["https://a.com", "https://b.com"]
