@@ -74,6 +74,10 @@ def build(argv):
     if op == "read":
         no_unknown_flags(rest, "read")
         return {"read": True}
+    if op in ("google-login", "googlelogin"):
+        # 🔵 Press the site's "Sign in with Google" button, then read where it landed.
+        no_unknown_flags(rest, "google-login")
+        return {"googleLogin": True, "read": True, "wait": 1500}
     if op == "click":
         need(rest, 1, "click <selector>")
         no_unknown_flags(rest[1:], "click")   # selector is rest[0]

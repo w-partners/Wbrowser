@@ -918,7 +918,7 @@ const KNOWN_KEYS = new Set([
   'goto', 'click', 'type', 'press', 'read', 'shot', 'eval', 'wait',
   'console', 'errors', 'network', 'tab', 'account', 'agent', 'selector',
   'newtab', 'newwindow', 'fullPage', 'limit', 'filter',
-  'noAutologin', 'scope',
+  'noAutologin', 'scope', 'googleLogin',
 ]);
 
 // 🔴 What is actually running here. Reported 2026-08-31: a fix was released, pulled,
@@ -1267,6 +1267,30 @@ async function act(cmd) {
         throw e;
       }
     }
+  }
+  if (cmd.googleLogin) {
+    // 🔵 Press the site's "Sign in with Google" button so the agent enters through the Google
+    //    session the seeded profile is already signed into (item 3 the master asked for). We try
+    //    structural selectors then text labels (googlelogin.js, ordered precise→loose) and click
+    //    the first that resolves to a real, visible element. If none is found we say so — we do
+    //    NOT click something that merely mentions Google.
+    const gl = require('./googlelogin');
+    let clickedWith = null;
+    for (const strat of gl.candidateStrategies()) {
+      try {
+        let loc;
+        if (strat.kind === 'selector') loc = page.locator(strat.value).first();
+        else loc = page.getByText(new RegExp(strat.value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i')).first();
+        if (await loc.count() === 0) continue;
+        if (!(await loc.isVisible().catch(() => false))) continue;
+        await loc.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
+        await loc.click({ timeout: 8000 });
+        clickedWith = `${strat.kind}:${strat.value}`;
+        break;
+      } catch { /* try the next strategy */ }
+    }
+    if (clickedWith) { done.push(`google-login (${clickedWith})`); result.googleLogin = { clicked: clickedWith }; await page.waitForTimeout(1500); }
+    else { result.googleLogin = { clicked: null, note: 'no Google sign-in button found on this page' }; }
   }
   if (cmd.click) {
     // 🔴 Say what was actually clicked, not what was asked for. A selector that matches

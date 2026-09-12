@@ -5,6 +5,33 @@ has the detail.
 
 ---
 
+## 0.21.0 — 2026-09-12
+
+### `wb google-login` — enter a site through your Google session
+
+With the profile seeded (v0.20), the window is signed into Google. This turns that into a site
+login: `wb google-login` finds the page's "Sign in with Google" button and presses it, so the
+agent enters through the Google account the profile already holds — no password typed.
+
+```
+wb go https://example.com/login
+wb google-login          # presses "Sign in with Google" / "구글로 로그인" / the GSI button
+```
+
+Finding the button is the hard part — every site labels it differently. It tries structural
+selectors first (`aria-label*="Google"`, the GSI `g_id_signin` container, `href*=accounts.google
+.com/o/oauth2`) then visible-text labels across locales ("Sign in with Google", "Continue with
+Google", "구글로 로그인", …), and clicks the first real, visible match. If no Google button is on
+the page it says so — it never clicks something that merely mentions Google. The matcher
+(`googlelogin.js`) is pure and unit-tested (English/Korean labels, the "google analytics" false
+positive, selector-before-text ordering).
+
+This completes the login story the master asked for: the seeded profile brings your Google login
+(v0.20), auto-fill signs in where a password is saved (v0.17), and `google-login` presses the
+OAuth button where a site offers it.
+
+---
+
 ## 0.20.0 — 2026-09-12
 
 ### Your Chrome logins come along — the agent's window is already signed in
