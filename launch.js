@@ -258,6 +258,39 @@ if (require.main !== module) return;
 
   fs.mkdirSync(PROFILE_DIR, { recursive: true });
 
+  // 🔵 Seed the logins from the user's REAL Chrome profile. Chrome 136+ won't let us drive the
+  //    default profile, so we run a copy in PROFILE_DIR — but an empty copy means "log in again",
+  //    which is exactly what wbrowser exists to avoid. When a source Chrome "User Data" is present
+  //    (Windows install), copy the login-bearing files of the chosen inner profile in, so the
+  //    agent's window is already signed in with the saved passwords that profile has. Seed-only:
+  //    it never overwrites files a session has already built up, so it is safe to run every start.
+  //    WBROWSER_NO_PROFILE_SEED=1 opts out (an intentionally empty window).
+  if (!process.env.WBROWSER_NO_PROFILE_SEED) {
+    try {
+      const { seedProfile } = require('./copyprofile');
+      // The source User Data root: an explicit override, else the Windows Chrome install.
+      let srcRoot = process.env.WBROWSER_SEED_FROM || '';
+      if (!srcRoot) {
+        for (const home of (fs.existsSync('/mnt/c/Users') ? fs.readdirSync('/mnt/c/Users') : [])) {
+          const cand = `/mnt/c/Users/${home}/AppData/Local/Google/Chrome/User Data`;
+          if (fs.existsSync(cand)) { srcRoot = cand; break; }
+        }
+      }
+      if (srcRoot && fs.existsSync(srcRoot)) {
+        const r = seedProfile(srcRoot, PROFILE_DIR, PROFILE);
+        if (r.copied.length) {
+          console.log(`🔵 Seeded ${r.copied.length} login file(s) from your Chrome profile "${PROFILE}" — you should already be signed in.`);
+        }
+        if (r.skipped.length) {
+          console.log(`🔵 ${r.skipped.length} file(s) were locked (Chrome is using that profile). Close that Chrome profile and re-run for a complete seed.`);
+        }
+      }
+    } catch (e) {
+      // Seeding is a convenience; never let it stop the launch.
+      console.error(`[seed] skipped: ${(e && e.message) || e}`);
+    }
+  }
+
   // The path to hand to Chrome (Windows notation when it is the Windows Chrome)
   const udd = CHROME_IS_WINDOWS && PROFILE_DIR.startsWith('/mnt/')
     ? toWindowsPath(PROFILE_DIR) : PROFILE_DIR;

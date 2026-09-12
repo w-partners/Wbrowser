@@ -5,6 +5,35 @@ has the detail.
 
 ---
 
+## 0.20.0 — 2026-09-12
+
+### Your Chrome logins come along — the agent's window is already signed in
+
+The biggest gap, and the thing that made the agent "ask to log in again": Chrome 136+ refuses
+remote debugging on your default profile, so wbrowser drives a copy in `~/.wbrowser` — but that
+copy started **empty**. So the saved passwords and sign-ins already in your Google/Chrome profile
+were left behind, and you (or the agent) had to log in from scratch. That is the opposite of the
+whole point.
+
+Now, on launch, wbrowser **seeds the copy from your real Chrome profile**: it copies the
+login-bearing files (Cookies, Login Data, Web Data, Preferences) of the chosen profile in, so the
+agent's window opens **already signed in, with the passwords that profile has saved**. Pick the
+profile with `wb up --account <email>` (or a profile name); it resolves to your Chrome profile and
+seeds from it.
+
+- **Seed-only** — it copies a file only when the destination doesn't have it, so it never clobbers
+  a session the agent has built up. Safe to run every start.
+- **Only login files** — not caches/history/GPU blobs. Small and to the point.
+- **Locked files are skipped**, not fatal: if Chrome is using that profile, some files (Cookies)
+  are locked; wbrowser copies what it can and tells you to close that profile for a complete seed.
+- Opt out with `WBROWSER_NO_PROFILE_SEED=1` for an intentionally empty window.
+
+This is what makes "no re-login" real, and combined with auto-fill (v0.17) and the credential
+vault, the agent can also sign itself in where a saved password exists. The seed logic
+(`copyprofile.js`) is pure and unit-tested.
+
+---
+
 ## 0.19.0 — 2026-09-12
 
 ### Scoped access — limit auto-fill to a task's own sites
