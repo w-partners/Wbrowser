@@ -327,7 +327,18 @@ if (require.main !== module) return;
     `--profile-directory=${PROFILE}`,
     '--no-first-run',
     '--no-default-browser-check',
-    '--disable-features=Translate',
+    // 🔴 Block Chrome's on-device AI model (Gemini Nano) download — it is ~4GB.
+    //    Real incident (2026-09-13, reported by seoul): a duns profile pulled
+    //    OptGuideOnDeviceModel/weights.bin 2730MB + cache.bin 1344MB and ate 4.2GB
+    //    of that host's disk. An automation profile never needs the on-device model.
+    // 🔵 Why the flag and not chrome://flags: the Chrome team states the model is
+    //    fetched whenever a page calls any `*.create()` (Summarizer, etc.), and that
+    //    the UI toggles do not prevent it. The command line is the reliable lever.
+    //    https://groups.google.com/a/chromium.org/g/chrome-ai-dev-preview-discuss/c/t6fqOnTzA_g
+    // 🔴 One --disable-features wins over another, so every name must live in ONE
+    //    comma-separated list. Adding a second flag would silently drop Translate.
+    '--disable-features=Translate,OptimizationGuideModelDownloading,OptimizationHints,'
+      + 'OptimizationHintsFetching,OptimizationTargetPrediction,OptimizationGuideOnDeviceModel',
   ];
   if (wantHeadless) {
     // 🔵 For servers with no display. Existing login sessions still work, but a person
