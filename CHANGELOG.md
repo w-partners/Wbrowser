@@ -34,30 +34,29 @@ OAuth button where a site offers it.
 
 ## 0.20.0 — 2026-09-12
 
-### Your Chrome logins come along — the agent's window is already signed in
+### Seed the wbrowser profile from your real Chrome profile (with real limits — read these)
 
-The biggest gap, and the thing that made the agent "ask to log in again": Chrome 136+ refuses
-remote debugging on your default profile, so wbrowser drives a copy in `~/.wbrowser` — but that
-copy started **empty**. So the saved passwords and sign-ins already in your Google/Chrome profile
-were left behind, and you (or the agent) had to log in from scratch. That is the opposite of the
-whole point.
+Chrome 136+ refuses remote debugging on your default profile, so wbrowser drives a copy in
+`~/.wbrowser` — and that copy started **empty**, so saved passwords and sign-ins were left behind.
+On launch wbrowser now **seeds the copy from your real Chrome profile**: it copies the
+login-bearing files (Login Data, Web Data, Preferences, and `Network/Cookies`) of the chosen
+profile in. Pick it with `wb up --account <email>`.
 
-Now, on launch, wbrowser **seeds the copy from your real Chrome profile**: it copies the
-login-bearing files (Cookies, Login Data, Web Data, Preferences) of the chosen profile in, so the
-agent's window opens **already signed in, with the passwords that profile has saved**. Pick the
-profile with `wb up --account <email>` (or a profile name); it resolves to your Chrome profile and
-seeds from it.
+🔴 **What this does NOT do — measured, not assumed (correcting an earlier overstatement):**
+- **Chrome running = cookies locked.** If your Chrome is open (it usually is), the Cookies DB is
+  locked and cannot be copied (`EACCES`). Cookies are the *logged-in session*, so with Chrome open
+  the seed brings the **saved passwords, not the live session** — you may still see a login page,
+  where auto-fill (v0.17) can then sign in. A complete "already signed in" seed needs that Chrome
+  profile **closed** during the copy.
+- **Cross-machine does not work.** Chrome encrypts Login Data / Cookies with the OS key (DPAPI on
+  Windows; `Local State` holds an `encrypted_key`). Copied to a *different* machine they cannot be
+  decrypted — so a profile cannot be moved to another agent's box to skip login there.
 
-- **Seed-only** — it copies a file only when the destination doesn't have it, so it never clobbers
-  a session the agent has built up. Safe to run every start.
-- **Only login files** — not caches/history/GPU blobs. Small and to the point.
-- **Locked files are skipped**, not fatal: if Chrome is using that profile, some files (Cookies)
-  are locked; wbrowser copies what it can and tells you to close that profile for a complete seed.
-- Opt out with `WBROWSER_NO_PROFILE_SEED=1` for an intentionally empty window.
-
-This is what makes "no re-login" real, and combined with auto-fill (v0.17) and the credential
-vault, the agent can also sign itself in where a saved password exists. The seed logic
-(`copyprofile.js`) is pure and unit-tested.
+So this helps most on the **same machine with that Chrome profile closed**. It is seed-only (never
+overwrites a session the agent built), copies login files only, skips locked files with a note, and
+opts out with `WBROWSER_NO_PROFILE_SEED=1`. The copy logic (`copyprofile.js`) is pure and
+unit-tested; the end-to-end "are you actually signed in" check is still pending real-Chrome
+verification.
 
 ---
 
