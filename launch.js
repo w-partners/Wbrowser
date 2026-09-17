@@ -261,9 +261,12 @@ if (require.main !== module) return;
   // 🔵 Seed the logins from the user's REAL Chrome profile. Chrome 136+ won't let us drive the
   //    default profile, so we run a copy in PROFILE_DIR — but an empty copy means "log in again",
   //    which is exactly what wbrowser exists to avoid. When a source Chrome "User Data" is present
-  //    (Windows install), copy the login-bearing files of the chosen inner profile in, so the
-  //    agent's window is already signed in with the saved passwords that profile has. Seed-only:
-  //    it never overwrites files a session has already built up, so it is safe to run every start.
+  //    (Windows install), copy the login-bearing files of the chosen inner profile in. 🔴 A running
+  //    Chrome holds Cookies exclusively (measured: cp/PowerShell both fail with a lock), so with
+  //    Chrome open only the saved PASSWORDS come (auto-fill can then sign in); the live SESSION
+  //    (cookies) needs that Chrome profile closed during the copy. And it is same-machine only —
+  //    Chrome encrypts these with the OS key (DPAPI), so a copy is undecryptable on another box.
+  //    Seed-only: never overwrites files a session built up, safe every start.
   //    WBROWSER_NO_PROFILE_SEED=1 opts out (an intentionally empty window).
   if (!process.env.WBROWSER_NO_PROFILE_SEED) {
     try {
@@ -279,10 +282,18 @@ if (require.main !== module) return;
       if (srcRoot && fs.existsSync(srcRoot)) {
         const r = seedProfile(srcRoot, PROFILE_DIR, PROFILE);
         if (r.copied.length) {
-          console.log(`🔵 Seeded ${r.copied.length} login file(s) from your Chrome profile "${PROFILE}" — you should already be signed in.`);
+          // 🔴 Do not claim "signed in": that is only true if the COOKIES came along. Saved
+          //    passwords let auto-fill sign you in; cookies are the live session. Say which we got.
+          const gotCookies = r.copied.some((f) => /cookies/i.test(f));
+          console.log(gotCookies
+            ? `🔵 Seeded ${r.copied.length} file(s) incl. cookies from Chrome profile "${PROFILE}" — the live session came along, you should be signed in.`
+            : `🔵 Seeded ${r.copied.length} file(s) (saved passwords) from Chrome profile "${PROFILE}". The login session (cookies) did NOT come — see below — so you may hit a login page where auto-fill signs in.`);
         }
         if (r.skipped.length) {
-          console.log(`🔵 ${r.skipped.length} file(s) were locked (Chrome is using that profile). Close that Chrome profile and re-run for a complete seed.`);
+          const cookieLocked = r.skipped.some((s) => /cookies/i.test(s.to));
+          console.log(cookieLocked
+            ? `🔴 Cookies are LOCKED (Chrome is running on that profile) so the login SESSION was not copied — only Chrome can release it. To bring the session, close that Chrome profile, then re-run. (Measured: a running Chrome holds Cookies exclusively; no copy method bypasses it.)`
+            : `🔵 ${r.skipped.length} file(s) were locked (Chrome is using that profile). Close it and re-run for a complete seed.`);
         }
       }
     } catch (e) {

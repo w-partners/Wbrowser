@@ -5,7 +5,24 @@ has the detail.
 
 ---
 
-## 0.21.0 — 2026-09-12
+## 0.21.1 — 2026-09-18
+
+### The profile-seed messages now tell the truth about cookies
+
+v0.20's launch message said "you should already be signed in" whenever it copied any file — but if
+Chrome is running, the Cookies DB is **locked** (measured: `cp` and PowerShell `Copy-Item` both
+fail with an exclusive-lock error; no copy method bypasses a running Chrome). Cookies are the live
+session, so with Chrome open the seed brings **saved passwords, not the session** — and the old
+message overstated it. Now the launch output says which it actually got:
+
+- cookies came → "the live session came along, you should be signed in"
+- cookies did not → "saved passwords only; the login session did NOT come — you may hit a login
+  page where auto-fill signs in"
+- cookies locked → "Cookies are LOCKED (Chrome is running on that profile) … close it and re-run"
+
+No behaviour change — same seed, honest reporting. The code comment now records the two measured
+limits (running Chrome locks cookies; DPAPI makes the copy same-machine-only) so the next reader
+does not re-learn them the hard way.
 
 ### `wb google-login` — enter a site through your Google session
 
