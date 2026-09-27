@@ -38,7 +38,25 @@ wb press Enter
 wb shot /tmp/x.png   # screenshot — you can then read the image
 wb video             # the video on this page → frame JPEGs you can Read
 wb video <url> --frames 12   # or one you have not opened
+wb collect <url> --count 100 --days 30   # a timeline as JSON (X)
 ```
+
+### 🔵 To analyse a timeline, use `wb collect` — not `read`
+
+"Gather a month of this account and tell me what worked" is not a `read` job. `read` gives
+you words; it does not give you anything you can sort or count.
+
+```bash
+wb collect https://x.com/someone --count 100 --days 30
+#  → a JSON path plus a 3-post preview. Per post: permalink, author, timestamp,
+#    text, metrics, media.
+```
+
+🔵 **The metrics are exact** — `2587` from the aria-label, not `2.5K` from the button.
+🔵 It scrolls to gather and **dedupes by post id** (X re-renders the same posts as you go).
+🔴 Do not dump the posts into your reply — 100 posts is 100 posts of context. Read the file.
+🔴 X only for now. Any other site is refused by name, with the supported list — never a
+quietly empty result.
 
 ### 🔴 Never answer "I can't see the video" — `wb video` exists
 

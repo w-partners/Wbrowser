@@ -961,6 +961,7 @@ const KNOWN_KEYS = new Set([
   'console', 'errors', 'network', 'tab', 'account', 'agent', 'selector',
   'newtab', 'newwindow', 'fullPage', 'limit', 'filter',
   'noAutologin', 'scope', 'googleLogin', 'video', 'maxFrames',
+  'collect', 'count', 'days', 'out',
 ]);
 
 // 🔴 What is actually running here. Reported 2026-08-31: a fix was released, pulled,
@@ -1346,6 +1347,72 @@ async function act(cmd) {
     }
     if (clickedWith) { done.push(`google-login (${clickedWith})`); result.googleLogin = { clicked: clickedWith }; await page.waitForTimeout(1500); }
     else { result.googleLogin = { clicked: null, note: 'no Google sign-in button found on this page' }; }
+  }
+  if (cmd.collect) {
+    // 🔴 Collecting is scroll → extract → dedupe → repeat. Each step has a way to lie:
+    //    scrolling that has hit the end still "succeeds", and X re-renders the same posts
+    //    as you scroll, so without deduping a "100 posts" run happily returns 15 posts
+    //    seven times and reports 105.
+    // 🔵 Everything the page returns goes through collect.js, which is unit-tested against
+    //    fake DOMs — the engine here only drives the loop and writes the file.
+    const col = require('./collect');
+    const plat = col.platformFor(page.url());
+    if (!plat) {
+      result.collect = { error: `no collector for ${page.url()} — supported: ${Object.keys(col.PLATFORMS).join(', ')}` };
+    } else {
+      const want = Number(cmd.count) > 0 ? Number(cmd.count) : 50;
+      const days = Number(cmd.days) > 0 ? Number(cmd.days) : null;
+      const seen = new Set();
+      const rows = [];
+      let stalled = 0;
+      let lastHeight = 0;
+      // 🔴 Bound the loop by BOTH a scroll cap and a stall counter. A count target alone
+      //    never terminates on an account with fewer posts than asked for.
+      for (let i = 0; i < 120 && rows.length < want; i += 1) {
+        const batch = await page.evaluate(plat.extract).catch(() => []);
+        col.mergeRows(seen, rows, batch, plat.shape, days);
+        if (rows.length >= want) break;
+        const pos = await page.evaluate(col.SCROLL_STEP).catch(() => null);
+        // 🔵 "Nothing new appeared" is the real end signal — height alone keeps growing
+        //    for a moment after the last batch. Require a few quiet rounds.
+        if (!pos || pos.h === lastHeight) stalled += 1; else stalled = 0;
+        lastHeight = pos ? pos.h : lastHeight;
+        if (stalled >= 3) break;
+        await page.waitForTimeout(900);
+      }
+      const trimmed = rows.slice(0, want);
+      const payload = {
+        source: page.url(),
+        platform: plat.name,
+        collectedAt: new Date().toISOString(),
+        requested: want,
+        withinDays: days,
+        count: trimmed.length,
+        posts: trimmed,
+      };
+      // 🔴 Write to a file and hand back the path. A hundred posts inlined into the reply
+      //    is how an agent's context dies mid-task; the agent reads what it needs.
+      const outPath = typeof cmd.out === 'string' && cmd.out
+        ? cmd.out
+        : require('path').join(require('os').tmpdir(),
+          `wbcollect-${plat.name}-${Date.now()}.json`);
+      try {
+        require('fs').writeFileSync(outPath, JSON.stringify(payload, null, 2));
+        result.collect = {
+          file: outPath, count: trimmed.length, platform: plat.name, source: payload.source,
+          // 🔵 A short preview so the caller can sanity-check without opening the file —
+          //    and so "it collected nothing" is visible immediately rather than after a read.
+          preview: trimmed.slice(0, 3).map((p) => ({ at: p.at, likes: p.likes, text: (p.text || '').slice(0, 70) })),
+        };
+        if (trimmed.length < want) {
+          result.collect.note = `Asked for ${want}, found ${trimmed.length}`
+            + (days ? ` within ${days} days` : '') + ' — the page ran out.';
+        }
+      } catch (e) {
+        result.collect = { error: `collected ${trimmed.length} posts but could not write ${outPath}: ${e.message}` };
+      }
+      done.push(`collect (${trimmed.length})`);
+    }
   }
   if (cmd.video) {
     // 🔴 Reading a page that holds a video and reporting only its text is not reading the

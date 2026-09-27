@@ -5,6 +5,49 @@ has the detail.
 
 ---
 
+## 0.23.0 — 2026-09-28
+
+### `wb collect` — a timeline as data, not as a wall of text
+
+Reading a feed gave you `innerText` soup: you could see the posts, but not sort them, count
+them, or say which one did well. `wb collect` scrolls the page and writes structured JSON —
+one row per post with its permalink, author, exact timestamp, text, metrics and media.
+
+```
+wb collect https://x.com/someone --count 100 --days 30
+wb collect --out /tmp/posts.json          # from the page you are already on
+```
+
+It prints the file path and a three-post preview; the posts go to the file, because a
+hundred posts echoed into the reply is a hundred posts in the agent's context.
+
+Measured on a real timeline: 25 requested, 25 collected, 0 duplicates, metrics and dates on
+every row — and the numbers match what the single-post read reports (2587 likes, 198,916
+views on the same post).
+
+**Where the accuracy comes from**, and where it would have quietly gone wrong:
+
+- **Metrics are read from the `[role="group"]` aria-label, not the buttons.** The buttons say
+  `2.5K`; the label says `2587 likes`. Reading the buttons loses 87 likes and nothing
+  complains.
+- **Rows are deduped by post id.** X re-renders the same posts as you scroll, so without this
+  a "100 posts" run returns the same 15 posts seven times and reports 105.
+- **A metric that was not on the page stays absent** — never filled in as `0`, which would be
+  indistinguishable from a real zero.
+- **A post whose timestamp cannot be parsed is kept**, not dropped. Silent data loss dressed
+  up as filtering is worse than an odd row.
+- **The scroll loop stops on a stall**, not only on reaching the count — otherwise an account
+  with fewer posts than you asked for never terminates.
+
+### Fixed: the platform matcher never matched `x.com`
+
+`/(^|\.)x\.com/` tested against the whole URL, where `https://` sits in front of the host — so
+`https://x.com/someone` returned **false** and the collector refused a site it supports. The
+same shape of test also matches `https://evil.com/?r=x.com`. Matching is now done on the
+parsed hostname (exact domain or a subdomain of it), the same rule scoped autofill uses.
+
+---
+
 ## 0.22.0 — 2026-09-28
 
 ### `wb video` — see inside a video, not just notice one is there

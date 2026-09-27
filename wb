@@ -496,6 +496,25 @@ if not d.get('browser'):
     ;;
   go|read|click|type|press|console|errors|network|eval)
           _post "$(_json "$cmd" "$@")" | _pretty ;;
+  collect)
+    # 🔴 Print the path and a 3-post preview, not the posts. A hundred posts echoed into
+    #    the terminal is a hundred posts in the agent's context — the file exists so that
+    #    does not have to happen.
+    _post "$(_json "$cmd" "$@")" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+c = (d or {}).get('collect') or {}
+if c.get('error'):
+    print('❌ ' + c['error']); sys.exit(1)
+print('📥 %d posts from %s' % (c.get('count', 0), c.get('source') or '?'))
+if c.get('note'): print('🔵 ' + c['note'])
+for p in (c.get('preview') or []):
+    likes = p.get('likes')
+    print('   %s  %s♥  %s' % ((p.get('at') or '')[:16], ('%5s' % likes) if likes is not None else '    ?', (p.get('text') or '').replace(chr(10),' ')))
+print()
+print('   → ' + (c.get('file') or '?'))
+"
+    ;;
   video)
     # 🔴 Print the frame paths plainly, one per line. The agent's next move is to Read
     #    each one — that is the whole point of the command — and a JSON blob it has to

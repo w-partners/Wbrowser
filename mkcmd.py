@@ -74,6 +74,30 @@ def build(argv):
     if op == "read":
         no_unknown_flags(rest, "read")
         return {"read": True}
+    if op == "collect":
+        # wb collect <url> [--count N] [--days N] [--out FILE]
+        # 🔵 The URL is optional: with none, collect from the page you are already on.
+        args = list(rest)
+        opts = {}
+        for flag, key in (("--count", "count"), ("--days", "days"), ("--out", "out")):
+            if flag in args:
+                i = args.index(flag)
+                if i + 1 >= len(args):
+                    raise SystemExit("%s needs a value" % flag)
+                opts[key] = args[i + 1]
+                del args[i:i + 2]
+        no_unknown_flags(args[1:] if args else [], "collect")
+        cmd = {"collect": True}
+        if args and not args[0].startswith("-"):
+            cmd["goto"] = args[0]
+            cmd["wait"] = 2500
+        if "count" in opts:
+            cmd["count"] = int(opts["count"])
+        if "days" in opts:
+            cmd["days"] = int(opts["days"])
+        if "out" in opts:
+            cmd["out"] = opts["out"]
+        return cmd
     if op == "video":
         # 🔵 `wb video` with no argument means "the video on the page I am on". An optional
         #    URL lets you grab one without navigating there first.
