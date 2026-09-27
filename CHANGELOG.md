@@ -5,6 +5,46 @@ has the detail.
 
 ---
 
+## 0.24.0 — 2026-09-28
+
+### `wb collect` now does Reddit and Threads
+
+```
+wb collect https://www.reddit.com/r/LocalLLaMA/ --count 50
+wb collect https://www.threads.com/@someone --count 30
+```
+
+Measured on live pages: Reddit 20/20 collected with score, comment count and upvote ratio on
+every row; Threads 10/10 with metrics on 8.
+
+Each platform hands over its numbers differently, and the difference matters:
+
+| | where the numbers live | exact? |
+|---|---|---|
+| X | one `aria-label` per post | yes |
+| **Reddit** | attributes on `<shreddit-post>` | yes |
+| **Threads** | plain text on the card | **no — rounded** |
+
+**Threads counts are marked.** The card says `4.8천` / `2.6K`; there is no exact number
+anywhere on the page. We expand it to 4800 and set `countsApprox: true` on the post, so a
+caller sorting by likes can tell a measured 4800 from a rounded one. A ranking built on
+rounded counts otherwise reads as authoritatively as one built on real ones.
+
+**A partial metric run on Threads is dropped, not guessed.** The four counts are read by
+position (likes, replies, reposts, quotes); when fewer than four are readable, any of them
+could be any of the four, so the post comes back without metrics. On a real profile that was
+2 posts out of 10 — visibly missing rather than invisibly mislabelled.
+
+### Fixed: a Reddit post with no score was collected as scoring 0
+
+`Number(null)` is `0`, and the attribute reader coerced straight from the attribute — so a
+post whose `score` attribute was absent came back as `score: 0`: indistinguishable from a
+real zero, and sorted to the bottom as though it had been measured. The empty cases are now
+rejected before coercion, so an unmeasured metric stays absent. Caught by a unit test, not in
+production.
+
+---
+
 ## 0.23.0 — 2026-09-28
 
 ### `wb collect` — a timeline as data, not as a wall of text

@@ -55,8 +55,20 @@ wb collect https://x.com/someone --count 100 --days 30
 🔵 **The metrics are exact** — `2587` from the aria-label, not `2.5K` from the button.
 🔵 It scrolls to gather and **dedupes by post id** (X re-renders the same posts as you go).
 🔴 Do not dump the posts into your reply — 100 posts is 100 posts of context. Read the file.
-🔴 X only for now. Any other site is refused by name, with the supported list — never a
-quietly empty result.
+
+**Supported: X · Reddit · Threads.** Any other site is refused by name, with the supported
+list — never a quietly empty result.
+
+| | metrics | exact? |
+|---|---|---|
+| X | likes, reposts, views, bookmarks | yes |
+| Reddit | score, comments, upvote ratio | yes |
+| Threads | likes, replies, reposts, quotes | 🔴 **rounded** |
+
+🔴 **Never report a Threads count as exact.** The card shows `4.8천` / `2.6K` and no exact
+number exists on the page. Such posts carry `countsApprox: true` — when you see it, say
+"about". Without it, the number is measured.
+🔵 Threads drops all four counts when it cannot read all four — missing beats mislabelled.
 
 ### 🔴 Never answer "I can't see the video" — `wb video` exists
 

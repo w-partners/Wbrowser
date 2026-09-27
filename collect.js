@@ -41,6 +41,33 @@ function parseXMetrics(label) {
   return out;
 }
 
+// Threads shows counts abbreviated and localized — "4.8천", "2.6K", "1.2만" — and offers no
+// aria-label with the exact number (measured 2026-09-27, Korean UI). So unlike X, the number
+// we can read IS the rounded one.
+// 🔴 Therefore mark it. A caller that sorts by `likes` must be able to tell an exact 4800
+//    from a rounded 4.8천, or a ranking built on rounded numbers looks as authoritative as
+//    one built on real ones. That is why parsed Threads counts carry `approx: true`.
+const THREADS_UNITS = [
+  [/만$/, 10000], [/천$/, 1000],         // ko
+  [/[MmМ]$/, 1000000], [/[KkТт]$/, 1000], // en
+  [/億$/, 100000000], [/万$/, 10000],     // ja/zh
+];
+function parseCount(s) {
+  if (s === null || s === undefined) return null;
+  const t = String(s).trim().replace(/,/g, '');
+  if (!t) return null;
+  const m = t.match(/^([\d.]+)\s*(.*)$/);
+  if (!m) return null;
+  const n = Number(m[1]);
+  if (!Number.isFinite(n)) return null;
+  const suffix = (m[2] || '').trim();
+  if (!suffix) return { value: Math.round(n), approx: false };
+  for (const [re, mult] of THREADS_UNITS) {
+    if (re.test(suffix)) return { value: Math.round(n * mult), approx: true };
+  }
+  return { value: Math.round(n), approx: false };
+}
+
 // 🔵 Keep only posts inside the window the caller asked for. Pure, so it is testable, and
 //    it is where an off-by-one costs a month of data.
 function withinDays(iso, days) {
@@ -80,6 +107,69 @@ const X_EXTRACT = `(() => {
   });
 })()`;
 
+// Reddit is the easy one: <shreddit-post> carries everything as ATTRIBUTES — score,
+// comment-count, created-timestamp (ISO), author, permalink, post-title, upvote-ratio.
+// 🔵 Measured 2026-09-27 on r/LocalLLaMA. Read the attributes, not the rendered text: the
+//    card shows "176" for a score that is exactly 176 today, but shows "1.2k" once it grows.
+// 🔴 Reddit may serve a "Prove your humanity" JS challenge first. It clears itself after a
+//    few seconds — which is why zero posts is reported as zero, never as "no collector".
+const REDDIT_EXTRACT = `(() => {
+  return [...document.querySelectorAll('shreddit-post')].map((p) => {
+    const a = (n) => p.getAttribute(n);
+    const body = p.querySelector('[slot=text-body]');
+    return {
+      id: a('id'),
+      permalink: a('permalink'),
+      author: a('author'),
+      at: a('created-timestamp'),
+      title: a('post-title'),
+      text: body ? body.innerText : '',
+      score: a('score'),
+      comments: a('comment-count'),
+      ratio: a('upvote-ratio'),
+      subreddit: a('subreddit-prefixed-name'),
+      postType: a('post-type'),
+    };
+  });
+})()`;
+
+// Threads has no post element and no metric labels: a post is the subtree around a <time>,
+// and the counts are bare text nodes in order — likes, replies, reposts, quotes.
+// 🔴 Positional reading is fragile by nature, so it is fenced: we only take the trailing run
+//    of count-shaped tokens, and anything we cannot read stays null instead of being guessed.
+const THREADS_EXTRACT = `(() => {
+  const out = [];
+  for (const t of document.querySelectorAll('time')) {
+    const link = t.closest('a[href*="/post/"]');
+    if (!link) continue;
+    let box = t;
+    for (let i = 0; i < 12 && box.parentElement; i += 1) {
+      box = box.parentElement;
+      if (box.innerText && box.innerText.length > 60) break;
+    }
+    const lines = box.innerText.split('\\n').map((s) => s.trim()).filter(Boolean);
+    // Trailing count-shaped tokens: "4.8천", "420", "2.6K"
+    const isCount = (s) => /^[\\d.,]+\\s*[가-힣A-Za-z]?$/.test(s) && /\\d/.test(s);
+    const tail = [];
+    for (let i = lines.length - 1; i >= 0 && tail.length < 4; i -= 1) {
+      if (isCount(lines[i])) tail.unshift(lines[i]); else break;
+    }
+    const textLines = lines.slice(1).filter((s) => !isCount(s)
+      && !/^\\d+일$|^\\d+시간$|^\\d+분$|^번역하기$|^Translate$/.test(s));
+    out.push({
+      id: (link.getAttribute('href').split('/post/')[1] || '').split(/[?#]/)[0],
+      href: link.getAttribute('href'),
+      author: (lines[0] || '').replace(/^@/, ''),
+      at: t.getAttribute('datetime'),
+      text: textLines.join('\\n'),
+      counts: tail,
+      images: [...box.querySelectorAll('img')].filter((i) => i.naturalWidth >= 200).length,
+      videos: box.querySelectorAll('video').length,
+    });
+  }
+  return out;
+})()`;
+
 // How far down the page is "the end" — used by the scroll loop to know it has stopped moving.
 const SCROLL_STEP = `(() => {
   window.scrollBy(0, window.innerHeight * 0.9);
@@ -112,6 +202,66 @@ const PLATFORMS = {
       videos: row.videos && row.videos.length ? row.videos : undefined,
     }),
   },
+  reddit: {
+    match: (u) => hostIs(u, ['reddit.com']),
+    extract: REDDIT_EXTRACT,
+    shape: (row) => {
+      // 🔴 Number(null) is 0 and Number('') is 0. Coercing straight from the attribute
+      //    turns "this post had no score attribute" into "this post scored 0" — a value
+      //    indistinguishable from a real zero, and one that sorts to the bottom as though
+      //    it had been measured. Reject the empty cases BEFORE coercing.
+      const num = (v) => {
+        if (v === null || v === undefined || v === '') return undefined;
+        const n = Number(v);
+        return Number.isFinite(n) ? n : undefined;
+      };
+      return {
+        id: row.id,
+        url: row.permalink ? `https://www.reddit.com${row.permalink}` : undefined,
+        author: row.author,
+        at: row.at,
+        title: row.title,
+        text: row.text || '',
+        score: num(row.score),
+        comments: num(row.comments),
+        upvoteRatio: num(row.ratio),
+        subreddit: row.subreddit,
+      };
+    },
+  },
+  threads: {
+    match: (u) => hostIs(u, ['threads.com', 'threads.net']),
+    extract: THREADS_EXTRACT,
+    shape: (row) => {
+      // Order on the card is likes, replies, reposts, quotes (measured 2026-09-27).
+      // 🔴 Only trust it when all four are present; a partial run could be any of them, and
+      //    mislabelled metrics are worse than missing ones — you cannot spot them later.
+      const names = ['likes', 'replies', 'reposts', 'quotes'];
+      const out = {
+        id: row.id,
+        url: row.href ? `https://www.threads.com${row.href}` : undefined,
+        author: row.author,
+        at: row.at,
+        text: row.text || '',
+        images: row.images || undefined,
+        videos: row.videos || undefined,
+      };
+      if (Array.isArray(row.counts) && row.counts.length === 4) {
+        let anyApprox = false;
+        row.counts.forEach((raw, i) => {
+          const p = parseCount(raw);
+          if (!p) return;
+          out[names[i]] = p.value;
+          if (p.approx) anyApprox = true;
+        });
+        // 🔴 Say so when a number is rounded. Threads gives "4.8천", not 4800 — a caller
+        //    sorting by likes must know these are not exact, or a ranking built on rounded
+        //    counts reads as authoritatively as one built on real ones.
+        if (anyApprox) out.countsApprox = true;
+      }
+      return out;
+    },
+  },
 };
 
 function platformFor(url) {
@@ -135,4 +285,4 @@ function mergeRows(seen, out, rows, shape, days) {
   return added;
 }
 
-module.exports = { parseXMetrics, withinDays, platformFor, mergeRows, hostIs, PLATFORMS, SCROLL_STEP };
+module.exports = { parseXMetrics, parseCount, withinDays, platformFor, mergeRows, hostIs, PLATFORMS, SCROLL_STEP };

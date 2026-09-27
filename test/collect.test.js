@@ -116,5 +116,91 @@ check('shape() lifts metrics up and omits empty media keys', () => {
   assert.strictEqual(r.videos, undefined);
 });
 
+// ---- Reddit --------------------------------------------------------------
+// Reddit hands everything over as attributes, so the risk is not parsing — it is
+// type coercion. An attribute is always a string; "176" must land as a number or every
+// sort downstream compares text ("9" > "176").
+
+check('reddit: attributes become numbers, not strings', () => {
+  const r = col.PLATFORMS.reddit.shape({
+    id: 't3_1wrjlls', permalink: '/r/LocalLLaMA/comments/1wrjlls/x/', author: 'speedb0at',
+    at: '2026-09-27T12:58:39.380000+0000', title: 'T', text: 'b',
+    score: '176', comments: '52', ratio: '0.9356', subreddit: 'r/LocalLLaMA',
+  });
+  assert.strictEqual(r.score, 176);
+  assert.strictEqual(r.comments, 52);
+  assert.ok(Math.abs(r.upvoteRatio - 0.9356) < 1e-9);
+  assert.strictEqual(r.url, 'https://www.reddit.com/r/LocalLLaMA/comments/1wrjlls/x/');
+});
+
+check('reddit: a missing score is absent, not 0', () => {
+  const r = col.PLATFORMS.reddit.shape({ id: 't3_a', score: null, comments: undefined });
+  assert.ok(!('score' in r) || r.score === undefined, 'a score we did not see must not be 0');
+  assert.strictEqual(r.comments, undefined);
+});
+
+check('reddit: host matching accepts subdomains, rejects lookalikes', () => {
+  assert.strictEqual(col.platformFor('https://www.reddit.com/r/x/').name, 'reddit');
+  assert.strictEqual(col.platformFor('https://old.reddit.com/r/x/').name, 'reddit');
+  assert.strictEqual(col.platformFor('https://evil.com/?r=reddit.com'), null);
+});
+
+// ---- Threads -------------------------------------------------------------
+// Threads gives abbreviated, localized counts and no exact source. The danger is
+// presenting a rounded number as though it were exact, and mislabelling metrics read
+// by position.
+
+check('threads: abbreviated counts are expanded AND flagged approximate', () => {
+  assert.deepStrictEqual(col.parseCount('4.8천'), { value: 4800, approx: true });
+  assert.deepStrictEqual(col.parseCount('2.6K'), { value: 2600, approx: true });
+  assert.deepStrictEqual(col.parseCount('1.2만'), { value: 12000, approx: true });
+});
+
+check('threads: a plain number is exact, not flagged', () => {
+  assert.deepStrictEqual(col.parseCount('420'), { value: 420, approx: false });
+  assert.deepStrictEqual(col.parseCount('1,234'), { value: 1234, approx: false });
+});
+
+check('threads: garbage yields null rather than a wrong number', () => {
+  assert.strictEqual(col.parseCount(null), null);
+  assert.strictEqual(col.parseCount(''), null);
+  assert.strictEqual(col.parseCount('abc'), null);
+});
+
+check('threads: four counts map to likes/replies/reposts/quotes, flagged approx', () => {
+  const r = col.PLATFORMS.threads.shape({
+    id: 'Ddt7cL5EfUG', href: '/@zuck/post/Ddt7cL5EfUG', author: 'zuck',
+    at: '2026-09-25T16:50:21.000Z', text: 'hi', counts: ['4.8천', '420', '290', '131'],
+  });
+  assert.strictEqual(r.likes, 4800);
+  assert.strictEqual(r.replies, 420);
+  assert.strictEqual(r.reposts, 290);
+  assert.strictEqual(r.quotes, 131);
+  assert.strictEqual(r.countsApprox, true, 'a rounded count must be marked');
+  assert.strictEqual(r.url, 'https://www.threads.com/@zuck/post/Ddt7cL5EfUG');
+});
+
+check('threads: exact counts are NOT flagged approximate', () => {
+  const r = col.PLATFORMS.threads.shape({
+    id: 'a', href: '/@z/post/a', counts: ['12', '3', '1', '0'],
+  });
+  assert.strictEqual(r.likes, 12);
+  assert.strictEqual(r.countsApprox, undefined);
+});
+
+check('threads: a partial count run is DROPPED, never mislabelled', () => {
+  // 🔴 Two numbers could be any two of the four. Guessing which would produce metrics
+  //    that look right and are wrong — unspottable later. Measured: 2 of 10 posts on a
+  //    real profile had no readable counts, and they came back without metrics.
+  const r = col.PLATFORMS.threads.shape({ id: 'a', href: '/@z/post/a', counts: ['4.8천', '420'] });
+  assert.strictEqual(r.likes, undefined);
+  assert.strictEqual(r.replies, undefined);
+});
+
+check('threads.net and threads.com both resolve', () => {
+  assert.strictEqual(col.platformFor('https://www.threads.com/@z').name, 'threads');
+  assert.strictEqual(col.platformFor('https://www.threads.net/@z').name, 'threads');
+});
+
 if (failures) { console.log(`\n${failures} failing`); process.exit(1); }
 console.log('\nall passing');
