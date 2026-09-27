@@ -332,10 +332,13 @@ case "$cmd" in
     echo "✅ Browser $N is '$NAME'.  Start it with:  wb -b $NAME up   (then sign in once)"
     exit 0 ;;
   browsers)
-    # The list, so a person can see which number is which.
-    echo "  #  name"
-    python3 "$DIR/browsers.py" list | while IFS=$'\t' read -r n nm; do
-      printf '  %-2s %s\n' "$n" "$nm"
+    # The list, so a person can see which number is which — and which account each
+    # one is signed into, since the name is a label the person chose and says nothing
+    # about whose session is inside. A blank account means "not known" (usually the
+    # browser has never been started), never "signed out".
+    echo "  #  name          account"
+    python3 "$DIR/browsers.py" list --accounts | while IFS=$'\t' read -r n nm acct; do
+      printf '  %-2s %-13s %s\n' "$n" "$nm" "${acct:-—}"
     done
     exit 0 ;;
   up)

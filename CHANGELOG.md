@@ -5,6 +5,21 @@ has the detail.
 
 ---
 
+## 0.21.2 — 2026-09-27
+
+### An email/username is not a credential — the agent may type it
+
+The skill said "never type credentials", which some agents over-applied — refusing to type an
+**email address** into a sign-up or login field on the theory that "a password follows". That
+blocked ordinary sign-up/login flows the tool is perfectly able to drive. Clarified in SKILL.md
+(both language copies): an email or username **is** fine to type; the store-and-fill path is only
+for passwords, card numbers, and national IDs — where the user enrolls the value once and the
+**engine** fills the form so the AI never sees it (`wb login` already does this for passwords, the
+same way Aside uses a stored credential). No behaviour change in code — a documentation fix that
+unblocks email entry. (Master 2026-09-27: blocking email was over-applying the rule.)
+
+---
+
 ## 0.21.1 — 2026-09-18
 
 ### The profile-seed messages now tell the truth about cookies

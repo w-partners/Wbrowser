@@ -88,10 +88,57 @@ def add(name):
     return 0
 
 
-def list_all():
-    print("1\tdefault")
-    for b in sorted(load()["browsers"], key=lambda x: x["num"]):
-        print("%d\t%s" % (b["num"], b["name"]))
+def profile_dir(name):
+    """Where `wb -b <name> up` puts that browser's profile (same rule as wb)."""
+    root = os.environ.get("WBROWSER_PROFILE_ROOT") or os.path.join(
+        os.path.expanduser("~"), ".wbrowser"
+    )
+    return os.path.join(root, name)
+
+
+def account_of(name):
+    """Which account a browser's profile belongs to, read from Chrome's own record.
+
+    Reads `Local State` -> profile.info_cache, the same record Chrome keeps and
+    `whoami.describe` reads. This resolves the path itself instead of calling
+    describe(), because describe() first maps a Windows path into WSL and gives up
+    when handed a plain Linux path — which is exactly what these profiles are.
+
+    Returns None when it cannot be determined — a browser that has never been
+    started has no profile yet. 🔴 None means "not known", which is not the same
+    as "signed out"; the caller must not render the two the same way.
+    """
+    root = profile_dir(name)
+    for base, prof in ((root, "Default"), (os.path.dirname(root), os.path.basename(root))):
+        state = os.path.join(base, "Local State")
+        if not os.path.exists(state):
+            continue
+        try:
+            with open(state, encoding="utf-8", errors="replace") as handle:
+                cache = json.load(handle).get("profile", {}).get("info_cache", {})
+        except Exception:
+            continue
+        entry = cache.get(prof)
+        if entry is None and len(cache) == 1:
+            entry = list(cache.values())[0]
+        if entry is None:
+            continue
+        return entry.get("user_name") or entry.get("name") or None
+    return None
+
+
+def list_all(with_accounts=False):
+    rows = [(1, "default")] + [
+        (b["num"], b["name"]) for b in sorted(load()["browsers"], key=lambda x: x["num"])
+    ]
+    for num, name in rows:
+        if not with_accounts:
+            print("%d\t%s" % (num, name))
+            continue
+        # Browser 1 is the Chrome the user was already in; its profile lives
+        # wherever that Chrome put it, not under the wbrowser root.
+        account = account_of(name) if num != 1 else None
+        print("%d\t%s\t%s" % (num, name, account or ""))
     return 0
 
 
@@ -105,7 +152,7 @@ def main(argv):
     if op == "add":
         return add(argv[1] if len(argv) > 1 else "")
     if op == "list":
-        return list_all()
+        return list_all(with_accounts="--accounts" in argv[1:])
     sys.stderr.write("unknown op %r\n" % op)
     return 2
 

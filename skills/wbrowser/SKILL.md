@@ -8,8 +8,9 @@ description: Use when a task needs a browser that is already signed in — readi
 The user signed into a real Chrome window once, by hand. You drive **that window**,
 so anything behind a login is reachable without credentials.
 
-🔴 **You never handle passwords.** If a site is signed out, ask the user to sign in.
-Do not type credentials, even if the user pastes them.
+🔴 **You never type a password/card/ID by value** — the user stores it once and the engine fills
+it (`wb login`; the AI never sees the value). But an **email or username is fine to type** into a
+form; only passwords, card numbers and national IDs go through the store-and-fill path.
 
 ## Before anything else
 
@@ -362,7 +363,12 @@ node cron.js daemon        # on schedule
 
 ## 🔴 Never
 
-- **Type a password, card number, or national ID.** The user does that.
+- **Type a password, card number, or national ID by value.** Instead, the user stores it once and
+  the **engine** fills the form (`wb login` already does this for passwords: user enrolls once →
+  the engine finds and fills the login form → **the AI never sees the value**). Same as Aside.
+  🔵 **An email or username is NOT a credential — go ahead and type it** into a sign-up/login
+  field. Do not block an email address on the theory that "a password follows"; that is
+  over-applying the rule (which covers passwords, card numbers, national IDs — not emails).
 - **Print or log cookie values.** A cookie *is* the login.
 - **`wb down` to close Chrome.** It may be the user's window. `wb down` stops the
   engine only — say so rather than killing the browser.
