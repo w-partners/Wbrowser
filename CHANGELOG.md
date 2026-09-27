@@ -5,6 +5,75 @@ has the detail.
 
 ---
 
+## 0.25.0 — 2026-09-28
+
+### `wb collect` now does Hacker News and Instagram — five platforms
+
+```
+wb collect https://news.ycombinator.com/ --count 30
+wb collect https://www.instagram.com/someone/ --count 20
+```
+
+Measured live: **Hacker News 20/20** with score and exact timestamp on every row (comments on
+18 — the other two are posts with no discussion, which is not the same as zero). **Instagram
+15/15** with captions on all of them.
+
+### Instagram says what it cannot give you
+
+The profile grid is thumbnails and nothing else: **no timestamps, no like or comment counts**
+— those exist only once a post is opened. So this collector returns links and captions (the
+caption survives as the thumbnail's alt text), and **every row carries a line saying why the
+metrics are absent**.
+
+That line is the feature. A silently empty `likes` field reads as "this account gets no
+engagement", and a caller sorting by it would rank real posts by a number nobody measured.
+
+**`--days` on Instagram is refused, not ignored.** With no dates on the page there is nothing
+to filter by, so the result says `--days 30 was NOT applied` and `wb collect` prints it in
+red. A filter that looks honoured and is absent is worse than one that is declined.
+
+### Hacker News: an absent score is not a zero
+
+A job post has no score and no discuss link. `"103 points"` becomes `103`; nothing becomes
+nothing. The story's own link is kept separately from its HN item URL, because the two answer
+different questions.
+
+Supported now: **X · Reddit · Threads · Hacker News · Instagram**. 32 unit tests, no Chrome.
+
+### Fixed: a command the fallback could not run reported success
+
+Reported by a user who lost 20 minutes to it. `wb collect` printed `📥 0 posts from ?` on a
+profile, so they went hunting for a collector bug. There wasn't one — three separate layers
+were each dropping the reason on the floor:
+
+1. **The raw-CDP fallback ignored `collect` entirely.** When playwright is down the engine
+   serves over raw CDP, and that lane handled `goto/click/type/press/eval/read/shot` — an
+   unknown key fell straight through. The reply came back `200` with `done:["newtab"]`, a
+   command silently not run and reported as success. It now **refuses by name** anything that
+   lane cannot do, and `collect` actually runs there (it only needs `evaluate`, which raw CDP
+   has), so the fallback stays a complete path.
+2. **A top-level engine error never reached the screen.** The engine answered `500` with
+   *"connectOverCDP timed out — restart the engine"*, and `wb collect`'s parser looked only at
+   `d['collect']`, found nothing, and printed `0 posts`. The diagnosis existed and was thrown
+   away at the last step. `wb video` had the identical hole — both now print it, and `fmt.py`
+   prints the fallback refusal alongside `done`.
+3. **"Nothing loaded" and "no posts here" looked the same.** `collect` now checks the page
+   actually rendered first and says which one it is, with the evidence
+   (`url about:blank, title "", 0 chars`) and what to try next.
+
+A tool that stays silent leaves you with no information; a tool that reports success for work
+it skipped sends you to the wrong place. The second is worse, and all three of these were the
+second.
+
+### Fixed: `--out` into a missing directory dumped a Python traceback
+
+`wb collect --out /new/dir/posts.json` threw `ENOENT`, the engine replied with a non-JSON
+body, and `wb` printed `json.decoder.JSONDecodeError` — which tells you about our parser, not
+about your problem. The parent directory is now created, and a non-JSON reply is shown
+verbatim instead of crashing the formatter.
+
+---
+
 ## 0.24.0 — 2026-09-28
 
 ### `wb collect` now does Reddit and Threads

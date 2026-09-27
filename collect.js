@@ -170,6 +170,59 @@ const THREADS_EXTRACT = `(() => {
   return out;
 })()`;
 
+// Hacker News is the cleanest of the lot: a post is tr.athing, its metadata is the very next
+// row, and every field has a class. The age carries an exact ISO timestamp in `title`.
+// 🔵 Measured 2026-09-27 on the front page: 30 rows, score/user/comments all present.
+const HN_EXTRACT = `(() => {
+  return [...document.querySelectorAll('tr.athing')].map((r) => {
+    const sub = r.nextElementSibling;
+    const q = (el, s) => (el ? el.querySelector(s) : null);
+    const titleA = q(r, '.titleline a');
+    const ageEl = q(sub, '.age');
+    const scoreEl = q(sub, '.score');
+    // "64 comments" — the discuss link. On a job post there is none, and that is not 0.
+    const commentA = sub
+      ? [...sub.querySelectorAll('a')].find((a) => /\\d+\\s*(comment|comments)/i.test(a.innerText))
+      : null;
+    return {
+      id: r.id || null,
+      title: titleA ? titleA.innerText : null,
+      link: titleA ? titleA.href : null,
+      site: (q(r, '.sitestr') || {}).innerText || null,
+      author: (q(sub, '.hnuser') || {}).innerText || null,
+      at: ageEl ? ageEl.getAttribute('title') : null,
+      score: scoreEl ? scoreEl.innerText : null,       // "103 points"
+      comments: commentA ? commentA.innerText : null,  // "64 comments"
+    };
+  });
+})()`;
+
+// Instagram's profile grid is a wall of thumbnails and nothing else.
+// 🔴 Measured 2026-09-27 on a real profile: the grid has NO timestamps and NO like/comment
+//    counts — they only exist once a post is opened. The caption survives only as the
+//    thumbnail's alt text. So this collector returns links + captions and says plainly that
+//    metrics are not available from the grid. Inventing zeros, or quietly omitting the fact
+//    that nothing was measured, is what would make this feature a liar.
+const INSTAGRAM_EXTRACT = `(() => {
+  const seen = new Set();
+  const out = [];
+  for (const a of document.querySelectorAll('a[href*="/p/"], a[href*="/reel/"]')) {
+    const href = a.getAttribute('href') || '';
+    const m = href.match(/\\/(p|reel)\\/([^/?#]+)/);
+    if (!m || seen.has(m[2])) continue;
+    seen.add(m[2]);
+    const img = a.querySelector('img');
+    out.push({
+      id: m[2],
+      href,
+      kind: m[1] === 'reel' ? 'reel' : 'post',
+      caption: img && img.alt ? img.alt : '',
+      thumb: img && img.src ? img.src : null,
+    });
+  }
+  return out;
+})()`;
+
 // How far down the page is "the end" — used by the scroll loop to know it has stopped moving.
 const SCROLL_STEP = `(() => {
   window.scrollBy(0, window.innerHeight * 0.9);
@@ -261,6 +314,53 @@ const PLATFORMS = {
       }
       return out;
     },
+  },
+  hackernews: {
+    match: (u) => hostIs(u, ['news.ycombinator.com', 'ycombinator.com']),
+    extract: HN_EXTRACT,
+    shape: (row) => {
+      // "103 points" → 103, "64 comments" → 64. A field that was not on the row stays
+      // absent: a job post has no score and no discuss link, and that is not zero.
+      const lead = (s) => {
+        if (!s) return undefined;
+        const m = String(s).match(/([\d,]+)/);
+        if (!m) return undefined;
+        const n = Number(m[1].replace(/,/g, ''));
+        return Number.isFinite(n) ? n : undefined;
+      };
+      return {
+        id: row.id,
+        url: row.id ? `https://news.ycombinator.com/item?id=${row.id}` : undefined,
+        link: row.link || undefined,     // where the story points (often another site)
+        site: row.site || undefined,
+        author: row.author || undefined,
+        at: row.at,
+        title: row.title,
+        text: '',
+        score: lead(row.score),
+        comments: lead(row.comments),
+      };
+    },
+  },
+  instagram: {
+    match: (u) => hostIs(u, ['instagram.com']),
+    extract: INSTAGRAM_EXTRACT,
+    shape: (row) => ({
+      id: row.id,
+      url: row.href ? `https://www.instagram.com${row.href}` : undefined,
+      kind: row.kind,
+      // 🔵 The caption lives in the thumbnail's alt text; that is genuinely all the grid has.
+      text: row.caption || '',
+      thumb: row.thumb || undefined,
+      // 🔴 No date and no metrics exist in the grid — not "zero", not "unknown so far".
+      //    Stamp the reason on every row so a caller that sorts by likes finds out here
+      //    rather than concluding the account gets no engagement.
+      metricsUnavailable: 'Instagram\'s grid carries no timestamps or like/comment counts — '
+        + 'open a post to see those. Only links and captions are collectable here.',
+    }),
+    // 🔴 The day filter cannot work without dates. Say so instead of returning everything
+    //    and letting the caller believe it was filtered.
+    noDates: true,
   },
 };
 

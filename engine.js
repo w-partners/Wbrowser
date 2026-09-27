@@ -1019,6 +1019,76 @@ async function actViaRawCDP(cmd, tab) {
     if (cmd.type) { await raw.type(cmd.type.text != null ? cmd.type.text : cmd.type); done.push('type'); }
     if (cmd.press) { await raw.press(cmd.press); done.push(`press ${cmd.press}`); }
     if (cmd.eval) { result.result = await raw.evaluate(cmd.eval); done.push('eval'); }
+    if (cmd.collect) {
+      // 🔴 The fallback used to IGNORE this key: it answered 200 with `done:["newtab"]` and
+      //    no collect block, so `wb` printed "0 posts" and a user spent 20 minutes hunting a
+      //    collector bug (reported 2026-09-28). A command we cannot run must fail loudly;
+      //    one we CAN run should just run. Collecting only needs evaluate, which raw CDP has,
+      //    so it runs here too — the fallback stays a complete path.
+      const col = require('./collect');
+      const pageState = await raw.evaluate(`(() => ({ url: location.href, title: document.title,
+        bodyLen: document.body ? document.body.innerText.length : 0 }))()`).catch(
+        (e) => ({ failed: e.message.split('\n')[0] }));
+      const plat = pageState && pageState.url ? col.platformFor(pageState.url) : null;
+      if (!pageState || pageState.failed || !pageState.title && (pageState.bodyLen || 0) < 40) {
+        result.collect = {
+          error: 'the page did not load, so there was nothing to collect — this is not a '
+            + `collector failure (url ${pageState && pageState.url}, title `
+            + `${JSON.stringify(pageState && pageState.title)}, ${pageState && pageState.bodyLen} chars)`,
+          hint: 'Try `wb go https://example.com` — if that is blank too, the browser itself is '
+            + 'the problem, not the site. The engine is already on the raw-CDP fallback here, '
+            + 'so playwright is down: restart the engine, then Chrome if that does not help '
+            + '(ask the user first — it may be their window).',
+        };
+      } else if (!plat) {
+        result.collect = { error: `no collector for ${pageState.url} — supported: `
+          + Object.keys(col.PLATFORMS).join(', ') };
+      } else {
+        const want = Number(cmd.count) > 0 ? Number(cmd.count) : 50;
+        let days = Number(cmd.days) > 0 ? Number(cmd.days) : null;
+        let daysIgnored = null;
+        if (days && plat.noDates) { daysIgnored = days; days = null; }
+        const seen = new Set(); const rows = [];
+        let stalled = 0; let lastH = 0;
+        for (let i = 0; i < 120 && rows.length < want; i += 1) {
+          const batch = await raw.evaluate(plat.extract).catch(() => []);
+          col.mergeRows(seen, rows, batch || [], plat.shape, days);
+          if (rows.length >= want) break;
+          const pos = await raw.evaluate(col.SCROLL_STEP).catch(() => null);
+          if (!pos || pos.h === lastH) stalled += 1; else stalled = 0;
+          lastH = pos ? pos.h : lastH;
+          if (stalled >= 3) break;
+          await new Promise((r) => setTimeout(r, 900));
+        }
+        const trimmed = rows.slice(0, want);
+        const payload = { source: pageState.url, platform: plat.name,
+          collectedAt: new Date().toISOString(), requested: want, withinDays: days,
+          count: trimmed.length, posts: trimmed };
+        const outPath = typeof cmd.out === 'string' && cmd.out ? cmd.out
+          : require('path').join(require('os').tmpdir(), `wbcollect-${plat.name}-${Date.now()}.json`);
+        try {
+          const outDir = require('path').dirname(outPath);
+          if (outDir && outDir !== '.') require('fs').mkdirSync(outDir, { recursive: true });
+          require('fs').writeFileSync(outPath, JSON.stringify(payload, null, 2));
+          result.collect = { file: outPath, count: trimmed.length, platform: plat.name,
+            source: payload.source,
+            preview: trimmed.slice(0, 3).map((p) => ({ at: p.at, likes: p.likes,
+              text: (p.text || p.title || '').slice(0, 70) })) };
+          if (trimmed.length < want) {
+            result.collect.note = `Asked for ${want}, found ${trimmed.length}`
+              + (days ? ` within ${days} days` : '') + ' — the page ran out.';
+          }
+          if (daysIgnored) {
+            result.collect.daysIgnored = `--days ${daysIgnored} was NOT applied: ${plat.name} `
+              + 'pages carry no post dates, so nothing could be filtered by age.';
+          }
+        } catch (e) {
+          result.collect = { error: `collected ${trimmed.length} posts but could not write `
+            + `${outPath}: ${e.message}` };
+        }
+      }
+      done.push(`collect (${(result.collect && result.collect.count) || 0})`);
+    }
     if (cmd.read || cmd.goto || cmd.click) {
       // A minimal read: title/url/text and a few links/buttons — not the full summarize
       // (that walks the DOM via playwright helpers). Enough to see where you are.
@@ -1032,6 +1102,29 @@ async function actViaRawCDP(cmd, tab) {
       })()`);
     }
     if (cmd.shot) { result.screenshot_b64 = await raw.screenshot(!!cmd.fullPage); done.push('shot'); }
+    // 🔴 Refuse what this lane cannot do, instead of answering 200 as though it did.
+    //    `collect` used to fall straight through here: the reply came back with
+    //    done:["newtab"], no collect block, and `wb` printed "0 posts" — a command silently
+    //    not run, reported as success. Measured 2026-09-28 (a user lost 20 minutes to it).
+    //    KNOWN_KEYS only proves a key is spelled right; this proves it was HANDLED.
+    //    🔵 Keys that carry options rather than actions are not commands — listing them as
+    //    unsupported would be its own lie.
+    {
+      const OPTIONS = new Set(['tab', 'account', 'agent', 'selector', 'wait', 'limit', 'filter',
+        'fullPage', 'noAutologin', 'scope', 'count', 'days', 'out', 'maxFrames']);
+      const HANDLED = new Set(['goto', 'newtab', 'newwindow', 'click', 'type', 'press', 'eval',
+        'read', 'shot', 'collect']);
+      const unhandled = Object.keys(cmd || {})
+        .filter((k) => cmd[k] !== undefined && cmd[k] !== false)
+        .filter((k) => !OPTIONS.has(k) && !HANDLED.has(k));
+      if (unhandled.length) {
+        result.unsupportedOnFallback = `${unhandled.map((k) => `"${k}"`).join(', ')} `
+          + `${unhandled.length > 1 ? 'are' : 'is'} not available while the engine is on the `
+          + 'raw-CDP fallback (playwright is down), so it was NOT run. Restart the engine '
+          + '(`wb down; wb up`); if that does not restore playwright, only a Chrome restart '
+          + 'clears a utility-world buildup — ask the user first, it may be their window.';
+      }
+    }
     result.done = done;
     // 🔵 Tell the caller they are on the fallback lane, so a person knows why some things
     //    (rich click, newtab) are limited and that a Chrome restart returns the full engine.
@@ -1356,12 +1449,51 @@ async function act(cmd) {
     // 🔵 Everything the page returns goes through collect.js, which is unit-tested against
     //    fake DOMs — the engine here only drives the loop and writes the file.
     const col = require('./collect');
-    const plat = col.platformFor(page.url());
-    if (!plat) {
+    // 🔴 Check the page actually loaded BEFORE blaming the collector. Reported by a user
+    //    2026-09-28: `wb collect` returned "0 posts from ?" on a profile, and they spent
+    //    20 minutes hunting a collector bug — the browser was not rendering ANY page
+    //    (example.com came back blank too). The count was true and useless: it could not
+    //    distinguish "this account has no posts" from "nothing loaded at all".
+    //    So say which one it is. A tool that stays quiet about the difference sends the
+    //    person debugging in the wrong direction, which is worse than saying nothing.
+    const pageState = await page.evaluate(`(() => ({
+      url: location.href,
+      title: document.title,
+      bodyLen: document.body ? document.body.innerText.length : 0,
+    }))()`).catch((e) => ({ failed: e.message.split('\n')[0] }));
+    if (pageState.failed || pageState.url === 'about:blank'
+        || (!pageState.title && pageState.bodyLen < 40)) {
+      result.collect = {
+        error: 'the page did not load, so there was nothing to collect — this is not a '
+          + 'collector failure'
+          + (pageState.failed ? ` (could not read the page: ${pageState.failed})`
+            : ` (url ${pageState.url}, title ${JSON.stringify(pageState.title)}, `
+              + `${pageState.bodyLen} chars of text)`),
+        hint: 'Check the browser itself first: `wb go https://example.com` — if that is '
+          + 'blank too, the problem is the browser, not the site. Restart the engine '
+          + '(`wb down; wb up`); if it is still blank, a utility-world buildup is holding '
+          + 'playwright down and only a Chrome restart clears it (ask the user first, it '
+          + 'may be their window).',
+      };
+      done.push('collect (page not loaded)');
+    }
+    // 🔵 Fall through the normal path (journal, response shape) rather than returning early:
+    //    an early return would skip the journal and answer in a different shape than every
+    //    other command. `pageFailed` carries the "already explained" state down the branch.
+    const pageFailed = !!result.collect;
+    const plat = pageFailed ? null : col.platformFor(page.url());
+    if (pageFailed) {
+      // the reason is already in result.collect — do not overwrite it with "no collector"
+    } else if (!plat) {
       result.collect = { error: `no collector for ${page.url()} — supported: ${Object.keys(col.PLATFORMS).join(', ')}` };
     } else {
       const want = Number(cmd.count) > 0 ? Number(cmd.count) : 50;
-      const days = Number(cmd.days) > 0 ? Number(cmd.days) : null;
+      let days = Number(cmd.days) > 0 ? Number(cmd.days) : null;
+      // 🔴 A platform whose page carries no dates cannot honour --days. Silently ignoring it
+      //    would return every post while the caller believes they asked for the last month —
+      //    the filter would look applied and be absent. Drop it and say so in the result.
+      let daysIgnored = null;
+      if (days && plat.noDates) { daysIgnored = days; days = null; }
       const seen = new Set();
       const rows = [];
       let stalled = 0;
@@ -1397,6 +1529,13 @@ async function act(cmd) {
         : require('path').join(require('os').tmpdir(),
           `wbcollect-${plat.name}-${Date.now()}.json`);
       try {
+        // 🔵 Create the parent directory rather than failing on it. Reported 2026-09-28:
+        //    `--out /some/new/dir/posts.json` threw ENOENT, the engine answered with a
+        //    non-JSON body, and `wb` printed a raw Python traceback — for a situation the
+        //    tool can simply handle. Collecting 100 posts and then discarding them because
+        //    a folder was missing is the wrong trade.
+        const outDir = require('path').dirname(outPath);
+        if (outDir && outDir !== '.') require('fs').mkdirSync(outDir, { recursive: true });
         require('fs').writeFileSync(outPath, JSON.stringify(payload, null, 2));
         result.collect = {
           file: outPath, count: trimmed.length, platform: plat.name, source: payload.source,
@@ -1407,6 +1546,10 @@ async function act(cmd) {
         if (trimmed.length < want) {
           result.collect.note = `Asked for ${want}, found ${trimmed.length}`
             + (days ? ` within ${days} days` : '') + ' — the page ran out.';
+        }
+        if (daysIgnored) {
+          result.collect.daysIgnored = `--days ${daysIgnored} was NOT applied: `
+            + `${plat.name} pages carry no post dates, so nothing could be filtered by age.`;
         }
       } catch (e) {
         result.collect = { error: `collected ${trimmed.length} posts but could not write ${outPath}: ${e.message}` };

@@ -202,5 +202,70 @@ check('threads.net and threads.com both resolve', () => {
   assert.strictEqual(col.platformFor('https://www.threads.net/@z').name, 'threads');
 });
 
+// ---- Hacker News ---------------------------------------------------------
+// HN gives "103 points" and "64 comments" as text. The risk is the absent case: a job
+// post has no score and no discuss link, and that is not zero.
+
+check('hn: "103 points" → 103, "64 comments" → 64', () => {
+  const r = col.PLATFORMS.hackernews.shape({
+    id: '49867067', title: 'T', link: 'https://e.com/a', site: 'e.com',
+    author: 'someone', at: '2026-09-27T14:45:07', score: '103 points', comments: '64 comments',
+  });
+  assert.strictEqual(r.score, 103);
+  assert.strictEqual(r.comments, 64);
+  assert.strictEqual(r.url, 'https://news.ycombinator.com/item?id=49867067');
+  assert.strictEqual(r.link, 'https://e.com/a', 'the story link must survive separately');
+});
+
+check('hn: a job post (no score, no comments) gets neither as 0', () => {
+  const r = col.PLATFORMS.hackernews.shape({ id: '1', title: 'Hiring', score: null, comments: null });
+  assert.strictEqual(r.score, undefined);
+  assert.strictEqual(r.comments, undefined);
+});
+
+check('hn: thousands separators in a score', () => {
+  assert.strictEqual(col.PLATFORMS.hackernews.shape({ id: '1', score: '1,204 points' }).score, 1204);
+});
+
+check('hn: host matching', () => {
+  assert.strictEqual(col.platformFor('https://news.ycombinator.com/').name, 'hackernews');
+  assert.strictEqual(col.platformFor('https://evil.com/?x=news.ycombinator.com'), null);
+});
+
+// ---- Instagram -----------------------------------------------------------
+// The grid genuinely has no dates and no metrics (measured on a real profile). The whole
+// risk is pretending otherwise — a silently empty `likes` reads as "no engagement".
+
+check('instagram: every row says why metrics are missing', () => {
+  const r = col.PLATFORMS.instagram.shape({
+    id: 'Ddt7d7LmsO8', href: '/zuck/p/Ddt7d7LmsO8/', kind: 'post', caption: 'hi', thumb: 't.jpg',
+  });
+  assert.ok(/no timestamps or like\/comment counts/i.test(r.metricsUnavailable || ''),
+    'the reason must travel with the row, not just the summary');
+  assert.strictEqual(r.likes, undefined, 'never a fabricated 0');
+  assert.strictEqual(r.url, 'https://www.instagram.com/zuck/p/Ddt7d7LmsO8/');
+});
+
+check('instagram: the caption comes from alt text, reels are marked', () => {
+  const r = col.PLATFORMS.instagram.shape({ id: 'a', href: '/z/reel/a/', kind: 'reel', caption: 'c' });
+  assert.strictEqual(r.text, 'c');
+  assert.strictEqual(r.kind, 'reel');
+});
+
+check('instagram: declares noDates so --days cannot be silently ignored', () => {
+  assert.strictEqual(col.PLATFORMS.instagram.noDates, true);
+  // and the platforms that DO have dates must not claim it
+  assert.ok(!col.PLATFORMS.x.noDates);
+  assert.ok(!col.PLATFORMS.hackernews.noDates);
+});
+
+check('every platform exposes match/extract/shape', () => {
+  for (const [name, p] of Object.entries(col.PLATFORMS)) {
+    assert.strictEqual(typeof p.match, 'function', `${name}.match`);
+    assert.strictEqual(typeof p.extract, 'string', `${name}.extract`);
+    assert.strictEqual(typeof p.shape, 'function', `${name}.shape`);
+  }
+});
+
 if (failures) { console.log(`\n${failures} failing`); process.exit(1); }
 console.log('\nall passing');

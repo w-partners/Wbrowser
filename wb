@@ -502,12 +502,38 @@ if not d.get('browser'):
     #    does not have to happen.
     _post "$(_json "$cmd" "$@")" | python3 -c "
 import json, sys
-d = json.load(sys.stdin)
+raw = sys.stdin.read()
+# 🔴 Show what actually came back when it is not JSON. Reported 2026-09-28: a write error
+#    made the engine answer with a non-JSON body and this printed a Python traceback —
+#    which tells the reader about our parser, not about their problem.
+try:
+    d = json.loads(raw)
+except ValueError:
+    print('❌ The engine did not return JSON. It said:')
+    print((raw or '(nothing)').strip()[:800])
+    sys.exit(1)
+# 🔴 A top-level error is the engine saying the whole request failed — print it. This was
+#    the real cause of a 20-minute misdiagnosis (reported 2026-09-28): the engine answered
+#    500 with 'connectOverCDP timed out … restart the engine', and this parser looked only
+#    at d['collect'], found nothing, and printed '0 posts from ?'. The diagnosis existed and
+#    was thrown away at the last step — the worst kind of failure, because it sends the
+#    reader hunting in the wrong place instead of leaving them with no information.
+if (d or {}).get('error') and not (d or {}).get('collect'):
+    print('❌ ' + str(d['error'])[:600])
+    sys.exit(1)
+# 🔴 The fallback may have skipped part of the request — say so before the counts.
+if (d or {}).get('unsupportedOnFallback'):
+    print('🔴 ' + str(d['unsupportedOnFallback']))
 c = (d or {}).get('collect') or {}
 if c.get('error'):
-    print('❌ ' + c['error']); sys.exit(1)
+    print('❌ ' + c['error'])
+    if c.get('hint'): print('🔵 ' + c['hint'])
+    sys.exit(1)
 print('📥 %d posts from %s' % (c.get('count', 0), c.get('source') or '?'))
 if c.get('note'): print('🔵 ' + c['note'])
+# 🔴 A filter that was asked for and not applied must be said out loud. Printing the count
+#    alone would let --days look honoured when the platform has no dates to filter on.
+if c.get('daysIgnored'): print('🔴 ' + c['daysIgnored'])
 for p in (c.get('preview') or []):
     likes = p.get('likes')
     print('   %s  %s♥  %s' % ((p.get('at') or '')[:16], ('%5s' % likes) if likes is not None else '    ?', (p.get('text') or '').replace(chr(10),' ')))
@@ -521,7 +547,18 @@ print('   → ' + (c.get('file') or '?'))
     #    unpack first is a step where it gives up and says "I can't see the video".
     _post "$(_json "$cmd" "$@")" | python3 -c "
 import json, sys
-d = json.load(sys.stdin)
+raw = sys.stdin.read()
+try:
+    d = json.loads(raw)
+except ValueError:
+    print('❌ The engine did not return JSON. It said:')
+    print((raw or '(nothing)').strip()[:800]); sys.exit(1)
+# 🔴 Same trap as collect: a top-level error means the whole request failed, and printing
+#    only the video block turns a stated cause into a blank '🎬 video' line.
+if (d or {}).get('error') and not (d or {}).get('video'):
+    print('❌ ' + str(d['error'])[:600]); sys.exit(1)
+if (d or {}).get('unsupportedOnFallback'):
+    print('🔴 ' + str(d['unsupportedOnFallback'])); sys.exit(1)
 v = (d or {}).get('video') or {}
 if v.get('error'):
     print('❌ ' + v['error'])

@@ -56,14 +56,22 @@ wb collect https://x.com/someone --count 100 --days 30
 🔵 It scrolls to gather and **dedupes by post id** (X re-renders the same posts as you go).
 🔴 Do not dump the posts into your reply — 100 posts is 100 posts of context. Read the file.
 
-**Supported: X · Reddit · Threads.** Any other site is refused by name, with the supported
-list — never a quietly empty result.
+**Supported: X · Reddit · Threads · Hacker News · Instagram.** Any other site is refused by
+name, with the supported list — never a quietly empty result.
 
 | | metrics | exact? |
 |---|---|---|
 | X | likes, reposts, views, bookmarks | yes |
 | Reddit | score, comments, upvote ratio | yes |
+| Hacker News | score, comments (+exact timestamp) | yes |
 | Threads | likes, replies, reposts, quotes | 🔴 **rounded** |
+| Instagram | 🔴 **none** — links and captions only | — |
+
+🔴 **Instagram's grid has no metrics and no dates** — they exist only inside an opened post.
+Every collected row therefore carries `metricsUnavailable` explaining that. Do not read the
+empty metrics as "this account gets no engagement": **nothing was measured.**
+🔴 `--days` on Instagram is **refused, not applied** — `wb collect` prints a red line saying
+so. With no dates on the page there is nothing to filter by.
 
 🔴 **Never report a Threads count as exact.** The card shows `4.8천` / `2.6K` and no exact
 number exists on the page. Such posts carry `countsApprox: true` — when you see it, say

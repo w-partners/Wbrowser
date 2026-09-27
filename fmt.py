@@ -56,6 +56,13 @@ def main():
     # 🔴 A part that failed has to say so. These are set when read or shot timed out
     #    but the rest of the command worked — silence here would mean the caller sees
     #    a reply with no page in it and no reason given.
+    # 🔴 A command the fallback could not run must be visible HERE, not only in the JSON.
+    #    The engine already said so (unsupportedOnFallback) — printing `done` alone would
+    #    show "· newtab" for a request that also asked for something that never ran, which
+    #    reads as success. Same failure as "0 posts from ?": the value existed and the
+    #    screen dropped it (reported 2026-09-28, 20 minutes lost to it).
+    if d.get("unsupportedOnFallback"):
+        print("  🔴 " + str(d["unsupportedOnFallback"]))
     if d.get("readError"):
         print("  🔴 read:", d["readError"])
     if d.get("shotError"):
