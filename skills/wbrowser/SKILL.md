@@ -36,7 +36,25 @@ wb click '<sel>'
 wb type '<sel>' '<text>'
 wb press Enter
 wb shot /tmp/x.png   # screenshot — you can then read the image
+wb video             # the video on this page → frame JPEGs you can Read
+wb video <url> --frames 12   # or one you have not opened
 ```
+
+### 🔴 Never answer "I can't see the video" — `wb video` exists
+
+If a post holds a video, reading the text and stopping is reading **half the post**.
+`wb read` reports it under `media` (duration, size, whether the source is a blob);
+`wb video` shows you what is inside it:
+
+```bash
+wb video --frames 12     # prints frame paths — Read them to see the video
+```
+
+🔵 A `blob:` src is fine. You cannot fetch that URL, but `wb video` hands the **page**
+URL to yt-dlp, which resolves the real stream (X, YouTube, Reddit and most sites).
+🔴 Do not try to download the `blob:` URL. It cannot work.
+🔵 It makes no Chrome call, so it still works on the raw-CDP fallback.
+🔴 Spoken content is separate: with no captions you need a Whisper key via `/watch`.
 
 ### 🔴 Do not guess selectors
 
