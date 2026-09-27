@@ -74,6 +74,24 @@ def build(argv):
     if op == "read":
         no_unknown_flags(rest, "read")
         return {"read": True}
+    if op == "video":
+        # 🔵 `wb video` with no argument means "the video on the page I am on". An optional
+        #    URL lets you grab one without navigating there first.
+        url = rest[0] if rest and not rest[0].startswith("-") else True
+        tail = rest[1:] if url is not True else rest
+        max_frames = None
+        i = 0
+        while i < len(tail):
+            if tail[i] == "--frames" and i + 1 < len(tail):
+                max_frames = tail[i + 1]
+                del tail[i:i + 2]
+                continue
+            i += 1
+        no_unknown_flags(tail, "video")
+        cmd = {"video": url}
+        if max_frames:
+            cmd["maxFrames"] = int(max_frames)
+        return cmd
     if op in ("google-login", "googlelogin"):
         # 🔵 Press the site's "Sign in with Google" button, then read where it landed.
         no_unknown_flags(rest, "google-login")

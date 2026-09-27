@@ -496,6 +496,34 @@ if not d.get('browser'):
     ;;
   go|read|click|type|press|console|errors|network|eval)
           _post "$(_json "$cmd" "$@")" | _pretty ;;
+  video)
+    # 🔴 Print the frame paths plainly, one per line. The agent's next move is to Read
+    #    each one — that is the whole point of the command — and a JSON blob it has to
+    #    unpack first is a step where it gives up and says "I can't see the video".
+    _post "$(_json "$cmd" "$@")" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+v = (d or {}).get('video') or {}
+if v.get('error'):
+    print('❌ ' + v['error'])
+    print('   page: ' + (v.get('pageUrl') or '?'))
+    sys.exit(1)
+bits = []
+if v.get('title'):    bits.append(v['title'][:70])
+if v.get('uploader'): bits.append('by ' + v['uploader'])
+if v.get('seconds'):  bits.append('%ss' % v['seconds'])
+if v.get('width'):    bits.append('%sx%s' % (v['width'], v['height']))
+print('🎬 ' + '  ·  '.join(bits) if bits else '🎬 video')
+if v.get('note'): print('🔵 ' + v['note'])
+frames = v.get('frames') or []
+if frames:
+    print()
+    print('%d frames — Read these to see inside the video:' % len(frames))
+    for f in frames: print('  ' + f)
+elif v.get('video'):
+    print('  file: ' + v['video'])
+"
+    ;;
   tabs)
     # 🔴 The engine is the single source of the numbering. This used to read Chrome's
     #    /json directly and number the tabs itself, while the engine numbered them again

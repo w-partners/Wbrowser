@@ -709,6 +709,47 @@ async function summarize(page) {
         };
       })
       .filter((x) => x.name || x.id || x.placeholder || x.tag === 'editable');
+    // 🔴 A page is not only text. An agent that reads a post and reports "here is what it
+    //    says" while a 41-second video sits on screen has not read the post — it has read
+    //    half of it and does not know that. Measured 2026-09-27 on an X post: text and
+    //    metrics came through, the video was invisible to `read`, and the honest answer
+    //    ("I cannot see the video") only appeared because someone asked.
+    //    So report media the same way we report inputs: what is here, and is it reachable.
+    //    🔵 A <video> whose src is a blob: URL cannot be fetched by URL — the page built it
+    //    in memory. Say so explicitly and name the way out (`wb video`), because "blob:…"
+    //    on its own reads like a URL you could try, and the next agent will try it.
+    const media = (() => {
+      const images = [...document.querySelectorAll('img')]
+        .filter((i) => vis(i) && i.naturalWidth >= 150 && i.naturalHeight >= 150
+                       && i.src && !i.src.startsWith('data:'))
+        .slice(0, 12)
+        .map((i) => ({ src: i.src, alt: txt(i.alt), w: i.naturalWidth, h: i.naturalHeight }));
+      const videos = [...document.querySelectorAll('video')].filter(vis).slice(0, 6)
+        .map((v) => {
+          const src = v.currentSrc || v.src || '';
+          return {
+            src: src.slice(0, 200),
+            // 🔵 The poster is a real, fetchable image even when the stream is a blob —
+            //    it is the single most useful thing an agent can still reach.
+            poster: (v.poster || '').slice(0, 200),
+            seconds: Number.isFinite(v.duration) ? Math.round(v.duration * 10) / 10 : null,
+            w: v.videoWidth || null,
+            h: v.videoHeight || null,
+            blob: src.startsWith('blob:'),
+          };
+        });
+      if (!images.length && !videos.length) return undefined;
+      const out = {};
+      if (images.length) out.images = images;
+      if (videos.length) {
+        out.videos = videos;
+        if (videos.some((v) => v.blob)) {
+          out.note = 'A video here is a blob: URL — it cannot be downloaded by that URL. '
+            + 'Run `wb video` on this page to get the real stream and frames you can look at.';
+        }
+      }
+      return out;
+    })();
     // 🔴 Never return document.cookie (session-hijacking vector).
     return {
       title: document.title,
@@ -722,6 +763,7 @@ async function summarize(page) {
       links,
       buttons,
       inputs,
+      media,
     };
   });
 }
@@ -918,7 +960,7 @@ const KNOWN_KEYS = new Set([
   'goto', 'click', 'type', 'press', 'read', 'shot', 'eval', 'wait',
   'console', 'errors', 'network', 'tab', 'account', 'agent', 'selector',
   'newtab', 'newwindow', 'fullPage', 'limit', 'filter',
-  'noAutologin', 'scope', 'googleLogin',
+  'noAutologin', 'scope', 'googleLogin', 'video', 'maxFrames',
 ]);
 
 // 🔴 What is actually running here. Reported 2026-08-31: a fix was released, pulled,
@@ -1119,6 +1161,19 @@ async function act(cmd) {
     err.status = 400;
     throw err;
   }
+  // 🔴 `video` with an explicit URL needs no browser at all — it runs yt-dlp and ffmpeg on
+  //    that URL. Routing it through getTab made it fail with "no tab stamped for this agent"
+  //    (measured 2026-09-27) whenever playwright was down, which is exactly when a person
+  //    most wants a path that does not depend on playwright. Serve it before the tab lookup.
+  //    🔵 Bare `wb video` (no URL) still needs the tab — it has to ask the page where it is.
+  if (typeof cmd.video === 'string' && /^https?:/.test(cmd.video)) {
+    const vid = require('./video');
+    try {
+      return { ok: true, did: ['video'], video: await vid.grab(cmd.video, { maxFrames: cmd.maxFrames }) };
+    } catch (e) {
+      return { ok: true, did: ['video'], video: { error: e.message, pageUrl: cmd.video } };
+    }
+  }
   const tab = cmd.tab || 'main';
   // 🔴 Emergency lane. If playwright's connectOverCDP has gone half-dead (reconnectFailed,
   //    set by connect() after its one reconnect could not recover), do NOT call getTab —
@@ -1291,6 +1346,28 @@ async function act(cmd) {
     }
     if (clickedWith) { done.push(`google-login (${clickedWith})`); result.googleLogin = { clicked: clickedWith }; await page.waitForTimeout(1500); }
     else { result.googleLogin = { clicked: null, note: 'no Google sign-in button found on this page' }; }
+  }
+  if (cmd.video) {
+    // 🔴 Reading a page that holds a video and reporting only its text is not reading the
+    //    page. The <video> element almost always carries a blob: URL, which cannot be
+    //    fetched — so before this existed the honest answer was "I can see a video is
+    //    there, I cannot see what is in it", and the usual answer was silence.
+    //    We hand the PAGE url to yt-dlp (it knows the real stream for X/YouTube/Reddit/…),
+    //    then cut frames the agent can actually look at with Read.
+    // 🔵 Deliberately URL-based: no Chrome call, so it also works on the raw-CDP fallback
+    //    and adds no utility world.
+    const vid = require('./video');
+    const target = typeof cmd.video === 'string' && /^https?:/.test(cmd.video)
+      ? cmd.video : page.url();
+    try {
+      const got = await vid.grab(target, { maxFrames: cmd.maxFrames });
+      result.video = got;
+      done.push(`video (${got.frames.length} frames)`);
+    } catch (e) {
+      // 🔴 Name the page we tried. "yt-dlp failed" against the wrong URL sent someone
+      //    debugging the network when the tab had simply navigated away.
+      result.video = { error: e.message, pageUrl: target };
+    }
   }
   if (cmd.click) {
     // 🔴 Say what was actually clicked, not what was asked for. A selector that matches

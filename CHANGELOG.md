@@ -5,6 +5,48 @@ has the detail.
 
 ---
 
+## 0.22.0 — 2026-09-28
+
+### `wb video` — see inside a video, not just notice one is there
+
+Reading a post that holds a video and reporting only its text is reading half the post. Until
+now that half was invisible: a `<video>` on X, Reddit or Instagram almost always carries a
+`blob:` URL, which is built in the page's memory and cannot be fetched, so there was no path
+from "a video is here" to "this is what is in it". Measured on an X post (2026-09-27): the
+text and the view count came through, a 41-second video did not, and nothing in the tool said
+so — the honest answer only appeared because someone asked.
+
+```
+wb video                       # the video on the page you are on
+wb video <url> --frames 12     # or one you have not opened
+```
+
+It hands the **page** URL to yt-dlp (which knows the real stream behind the blob for X,
+YouTube, Reddit and most sites), downloads at ≤720p, and cuts keyframes to JPEGs — then prints
+the frame paths, one per line, because the next thing an agent does is read them.
+
+- Runs on URLs only: **no Chrome call**, so it works while playwright is down (the raw-CDP
+  fallback) and adds no utility world.
+- Falls back to even sampling when a clip has too few keyframes — a static screen recording
+  used to yield two frames and "I looked at the video" was then false.
+- Missing `yt-dlp`/`ffmpeg` is named plainly, with the install line.
+
+### `wb read` now reports images and video
+
+`read` listed links, buttons and inputs and said nothing about media. It now returns a `media`
+block: images (≥150px, real sources), and for each video its duration, dimensions, poster, and
+whether its source is a `blob:`. When it is, the note says so and points at `wb video` —
+because "blob:…" on its own reads like a URL worth trying, and the next agent tries it.
+
+### Fixed: `ffmpeg --version` was read as "ffmpeg is not installed"
+
+ffmpeg's flag is `-version` (one dash); on `--version` it prints the banner and exits non-zero.
+The probe trusted the exit code, so on a machine with a working ffmpeg the tool downloaded the
+video and then told the user to install something they already had. Presence is now decided by
+the binary existing, not by a command's exit convention.
+
+---
+
 ## 0.21.2 — 2026-09-27
 
 ### An email/username is not a credential — the agent may type it
