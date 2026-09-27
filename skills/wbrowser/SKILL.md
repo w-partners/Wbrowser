@@ -92,7 +92,17 @@ wb video --frames 12     # prints frame paths — Read them to see the video
 URL to yt-dlp, which resolves the real stream (X, YouTube, Reddit and most sites).
 🔴 Do not try to download the `blob:` URL. It cannot work.
 🔵 It makes no Chrome call, so it still works on the raw-CDP fallback.
-🔴 Spoken content is separate: with no captions you need a Whisper key via `/watch`.
+🔵 **You get what was said too — no API key.** Transcription runs locally via
+faster-whisper (19s of speech in 1.3s on CPU; the audio never leaves the machine):
+```bash
+wb video <url>                      # frames + transcript
+wb video <url> --whisper large-v3   # slower, better on accents and noise
+wb video <url> --no-transcript      # frames only
+```
+🔴 Never answer "speech needs an API key" — it is not true here.
+🔵 A clip with no speech returns `no speech detected`. That is an answer, not a failure.
+🔵 If `faster-whisper` is genuinely missing, the frames still come back and the message
+names the one-line install.
 
 ### 🔴 Do not guess selectors
 

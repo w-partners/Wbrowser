@@ -961,7 +961,7 @@ const KNOWN_KEYS = new Set([
   'console', 'errors', 'network', 'tab', 'account', 'agent', 'selector',
   'newtab', 'newwindow', 'fullPage', 'limit', 'filter',
   'noAutologin', 'scope', 'googleLogin', 'video', 'maxFrames',
-  'collect', 'count', 'days', 'out',
+  'collect', 'count', 'days', 'out', 'whisper', 'noTranscript',
 ]);
 
 // 🔴 What is actually running here. Reported 2026-08-31: a fix was released, pulled,
@@ -1263,7 +1263,7 @@ async function act(cmd) {
   if (typeof cmd.video === 'string' && /^https?:/.test(cmd.video)) {
     const vid = require('./video');
     try {
-      return { ok: true, did: ['video'], video: await vid.grab(cmd.video, { maxFrames: cmd.maxFrames }) };
+      return { ok: true, did: ['video'], video: await vid.grab(cmd.video, { maxFrames: cmd.maxFrames, whisperModel: cmd.whisper, transcribe: !cmd.noTranscript }) };
     } catch (e) {
       return { ok: true, did: ['video'], video: { error: e.message, pageUrl: cmd.video } };
     }
@@ -1570,7 +1570,7 @@ async function act(cmd) {
     const target = typeof cmd.video === 'string' && /^https?:/.test(cmd.video)
       ? cmd.video : page.url();
     try {
-      const got = await vid.grab(target, { maxFrames: cmd.maxFrames });
+      const got = await vid.grab(target, { maxFrames: cmd.maxFrames, whisperModel: cmd.whisper, transcribe: !cmd.noTranscript });
       result.video = got;
       done.push(`video (${got.frames.length} frames)`);
     } catch (e) {

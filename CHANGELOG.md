@@ -5,6 +5,45 @@ has the detail.
 
 ---
 
+## 0.26.0 — 2026-09-28
+
+### `wb video` now transcribes — locally, with no API key
+
+```
+wb video <url>                      # frames + transcript
+wb video <url> --whisper large-v3   # slower, better on accents and noise
+wb video <url> --no-transcript      # frames only
+```
+
+Frames show what is on screen; the transcript is what was **said**. A talking-head clip is
+almost entirely the latter, and frames alone report a face for forty seconds.
+
+```
+🎬 Me at the zoo  ·  by jawed  ·  19s  ·  320x240
+
+🎙️ transcript (en, local — no API):
+   [  0.0] Alright so here we are one of the elephants.
+   [  4.0] The cool thing about these guys is that they have really, really, really long punks.
+```
+
+Transcription runs on **faster-whisper on this machine** — the audio never leaves it, and
+there is no key to obtain. Measured: 19 seconds of speech transcribed in **1.3s on CPU**,
+language auto-detected at 0.98 confidence.
+
+**Correcting what this project said yesterday.** v0.22.0 listed "speech needs a Whisper API
+key" as a limitation. That was wrong: it repeated what one helper script happened to require
+without checking what was installed. A tool that reports a capability as missing while it sits
+installed is worse than not having it — the user goes hunting for a key instead of using what
+they already have.
+
+**An empty transcript is an answer, not a failure.** A clip with no speech comes back with
+`no speech detected`, because reporting that as an error would send someone debugging a
+transcriber that worked perfectly. Likewise, if `faster-whisper` is genuinely absent, the
+frames still come back and the message names the one-line install — the audio never fails the
+whole command.
+
+---
+
 ## 0.25.0 — 2026-09-28
 
 ### `wb collect` now does Hacker News and Instagram — five platforms

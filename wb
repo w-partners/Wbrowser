@@ -571,6 +571,21 @@ if v.get('seconds'):  bits.append('%ss' % v['seconds'])
 if v.get('width'):    bits.append('%sx%s' % (v['width'], v['height']))
 print('🎬 ' + '  ·  '.join(bits) if bits else '🎬 video')
 if v.get('note'): print('🔵 ' + v['note'])
+t = v.get('transcript')
+if t is not None:
+    segs = t.get('segments') or []
+    if segs:
+        print()
+        print('🎙️ transcript (%s, local — no API):' % t.get('language') or '?')
+        for sg in segs[:40]:
+            print('   [%5.1f] %s' % (sg.get('start') or 0, sg.get('text') or ''))
+        if len(segs) > 40: print('   … %d more segments in the JSON' % (len(segs)-40))
+    else:
+        print()
+        print('🎙️ ' + (t.get('note') or 'no speech'))
+elif v.get('transcriptError'):
+    print()
+    print('🔵 ' + v['transcriptError'])
 frames = v.get('frames') or []
 if frames:
     print()

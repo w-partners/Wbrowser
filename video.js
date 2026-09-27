@@ -162,6 +162,38 @@ async function extractFrames(videoPath, framesDir, wanted) {
   return frames.map((f) => path.join(framesDir, f));
 }
 
+// Transcribe locally with faster-whisper. No API key, no upload — the audio never leaves
+// the machine.
+// 🔴 "You need a Whisper API key" was wrong here (corrected 2026-09-28): faster-whisper was
+//    already installed with its models cached, and transcribed a 19s clip in 1.3s on CPU.
+//    Saying a capability is missing when it is installed is worse than not having it — the
+//    user goes looking for a key instead of using what they have.
+// 🔵 Optional by nature: if the package is absent we say so and still return the frames,
+//    rather than failing the whole command over the audio.
+const WHISPER_SNIPPET = `
+import json, sys
+from faster_whisper import WhisperModel
+model_size = sys.argv[2] if len(sys.argv) > 2 else "base"
+m = WhisperModel(model_size, device="cpu", compute_type="int8")
+segs, info = m.transcribe(sys.argv[1], beam_size=1)
+out = [{"start": round(s.start, 1), "end": round(s.end, 1), "text": s.text.strip()} for s in segs]
+print(json.dumps({"language": info.language, "confidence": round(info.language_probability, 2),
+                  "segments": out}, ensure_ascii=False))
+`;
+
+async function transcribe(videoPath, { model = 'base' } = {}) {
+  const { stdout } = await run('python3', ['-c', WHISPER_SNIPPET, videoPath, model],
+    { timeout: 900000 });
+  return JSON.parse(stdout.trim().split('\n').pop());
+}
+
+async function haveWhisper() {
+  try {
+    await run('python3', ['-c', 'import faster_whisper'], { timeout: 20000 });
+    return true;
+  } catch { return false; }
+}
+
 // The whole job: page URL in, frames on disk out.
 async function grab(pageUrl, opts = {}) {
   if (!await have('yt-dlp')) {
@@ -183,7 +215,29 @@ async function grab(pageUrl, opts = {}) {
     return result;
   }
   result.frames = await extractFrames(result.video, path.join(outDir, 'frames'), wanted);
+
+  // 🔵 Frames show what is on screen; the transcript is what was said. A talking-head clip
+  //    is almost entirely the latter, and frames alone would report a face for 40 seconds.
+  if (opts.transcribe !== false) {
+    if (await haveWhisper()) {
+      try {
+        const t = await transcribe(result.video, { model: opts.whisperModel });
+        // 🔴 An empty transcript is a real answer ("this clip has no speech"), not a failure.
+        //    Measured: the X clip is a silent animation and came back with one empty segment;
+        //    reporting that as an error would send someone hunting a broken transcriber.
+        const said = (t.segments || []).map((s) => s.text).join(' ').trim();
+        result.transcript = said
+          ? t
+          : { language: t.language, segments: [], note: 'no speech detected in this clip' };
+      } catch (e) {
+        result.transcriptError = `local transcription failed: ${e.message}`;
+      }
+    } else {
+      result.transcriptError = 'faster-whisper is not installed, so there is no transcript — '
+        + 'frames only. Install it with: pip install faster-whisper (runs locally, no API key).';
+    }
+  }
   return result;
 }
 
-module.exports = { grab, probe, frameCount, findBin };
+module.exports = { grab, probe, frameCount, findBin, transcribe, haveWhisper };

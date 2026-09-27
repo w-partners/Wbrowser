@@ -104,17 +104,33 @@ def build(argv):
         url = rest[0] if rest and not rest[0].startswith("-") else True
         tail = rest[1:] if url is not True else rest
         max_frames = None
+        whisper_model = None
+        no_transcript = False
         i = 0
         while i < len(tail):
             if tail[i] == "--frames" and i + 1 < len(tail):
                 max_frames = tail[i + 1]
                 del tail[i:i + 2]
                 continue
+            # 🔵 Transcription runs locally (faster-whisper) and needs no API key. Bigger
+            #    models are slower but better on accents and noise; base is the default.
+            if tail[i] == "--whisper" and i + 1 < len(tail):
+                whisper_model = tail[i + 1]
+                del tail[i:i + 2]
+                continue
+            if tail[i] == "--no-transcript":
+                no_transcript = True
+                del tail[i]
+                continue
             i += 1
         no_unknown_flags(tail, "video")
         cmd = {"video": url}
         if max_frames:
             cmd["maxFrames"] = int(max_frames)
+        if whisper_model:
+            cmd["whisper"] = whisper_model
+        if no_transcript:
+            cmd["noTranscript"] = True
         return cmd
     if op in ("google-login", "googlelogin"):
         # 🔵 Press the site's "Sign in with Google" button, then read where it landed.
