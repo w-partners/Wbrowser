@@ -5,6 +5,36 @@ has the detail.
 
 ---
 
+## 0.26.2 — 2026-10-01
+
+### Fixed: `wb down` killed every engine on the machine, not just yours
+
+`wb down` selected its target with `pgrep -f 'node .*engine\.js'` — which matches **every**
+engine running on the host. One project taking its browser down also took down other agents'
+engines, including a second checkout of this repo. The owner saw a listening socket simply
+vanish, with no crash in any log, and reasonably concluded the engine had died on its own.
+
+It now kills only the process holding `$ENGINE_PORT` — the port `-b` already resolves, and the
+one this command talks to. Verified with two engines running: `wb down` stopped 7981 and left
+7993 untouched.
+
+### Correction: `wb collect` had never worked
+
+v0.23.0 introduced `wb collect`, and the `result` TDZ fixed in 0.26.1 was present in that very
+commit. Checking each release since: **0.23.0, 0.24.0, 0.25.0 and 0.26.0 all shipped a
+`collect` that threw on every call.**
+
+The measurements quoted in those release notes (25/25 posts on X, 20/20 on Reddit, and so on)
+were real, but they came from a script driving raw CDP directly — not from `wb collect`. The
+command itself was never exercised end to end. 0.25.0's notes even listed "the engine path is
+unverified" as a known limitation; that limitation was the bug, and it was not closed before
+the next two releases went out.
+
+What changes: `test/result_tdz.test.js` guards the ordering, and a limitation written down as
+"unverified" is now treated as unfinished work rather than a footnote.
+
+---
+
 ## 0.26.1 — 2026-10-01
 
 ### Fixed: `collect`, `video` and `google-login` threw on every request

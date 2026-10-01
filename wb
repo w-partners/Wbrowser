@@ -843,16 +843,23 @@ else:
 "
     ;;
   down)
-    # 🔴 pkill -f also catches ourselves and the parent shell (if the same string is on their command line).
-    #    It actually killed the shell that invoked this script (2026-08-23). Narrow the target.
+    # 🔴 Kill by PORT, never by name. `pgrep -f 'node .*engine\.js'` matches EVERY engine on
+    #    the machine, so `wb down` in one project took down other agents' engines too — a
+    #    browser nobody asked you to touch just stops answering, and the owner sees "the
+    #    engine died on its own". Measured 2026-10-01: an influencer cron lost its engine
+    #    exactly this way, and the LISTEN socket simply vanished with no crash in any log.
+    #    A second clone of this repo has the same line, so it reached across checkouts too.
+    #    The port is unambiguous: -b picks it, and it is the engine this command talks to.
     KILLED=0
-    for pid in $(pgrep -f 'node .*engine\.js' 2>/dev/null); do
+    for pid in $(ss -ltnp 2>/dev/null | grep ":${ENGINE_PORT} " | grep -oP 'pid=\K[0-9]+' | sort -u); do
       [ "$pid" = "$$" ] && continue
       [ "$pid" = "$PPID" ] && continue
       # node processes only (not shells)
       case "$(readlink -f /proc/$pid/exe 2>/dev/null)" in *node*) kill "$pid" 2>/dev/null && KILLED=1;; esac
     done
-    [ "$KILLED" = 1 ] && echo "· Engine taken down" || echo "· Engine was not running"
+    [ "$KILLED" = 1 ] && echo "· Engine on port ${ENGINE_PORT} taken down" \
+                      || echo "· No engine was listening on port ${ENGINE_PORT}"
+    echo "🔵 Other browsers' engines are left alone — this only stops the one on ${ENGINE_PORT}."
     echo "🔵 Leaving Chrome alone (it may be a user window). To turn it off, close the window."
     ;;
   help|--help|-h)
