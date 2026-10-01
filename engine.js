@@ -113,7 +113,15 @@ const tabs = new Map();          // name -> page
 //    exactly that. This engine-lifetime flag makes the reconnect truly one-shot — after it
 //    fails, every later request goes straight to the restart-Chrome message until a
 //    successful connect clears it.
-let reconnectFailed = false;
+// 🔴 Start degraded on purpose when playwright cannot pair with the installed Chrome.
+//    Measured 2026-10-01: playwright 1.63.0 (the latest; it bundles Chrome 153) against
+//    Chrome 154 — connectOverCDP timed out at 120s while raw CDP opened a tab and rendered
+//    x.com in 6s. There is no newer playwright to upgrade to, so every request paid ~24s to
+//    fail before falling back, and the first one in a session always surfaced as an error.
+//    WBROWSER_FORCE_RAWCDP=1 skips that toll: go straight to the lane that works.
+// 🔵 It is opt-in because the raw lane is narrower (click is coordinate-based). When
+//    playwright and Chrome pair again, unset it — nothing else changes.
+let reconnectFailed = process.env.WBROWSER_FORCE_RAWCDP === '1';
 // 🔴 Also guard against CONCURRENT reconnects. Requests arrive back-to-back, and the
 //    failure flag is only set AFTER the reconnect returns — so several requests can pass
 //    the gate and each start their own reconnect before any of them fails. Measured
@@ -205,6 +213,10 @@ function needsFallbackError() {
 //    wall-clock guard, and reconnecting keeps concurrent callers from each trying.
 async function tryRecoverFromFallback() {
   if (!reconnectFailed || reconnecting) return false;
+  // 🔴 When the operator pinned this engine to raw CDP, do not keep trying to climb out —
+  //    each attempt spends the full connect timeout before failing, on every request, and
+  //    the pin exists precisely because that pairing is known not to work here.
+  if (process.env.WBROWSER_FORCE_RAWCDP === '1') return false;
   // If Chrome is not even answering raw CDP, playwright will not connect either — skip the
   // (bounded but non-zero) attempt and let the fallback's own probe report the dead Chrome.
   if (!await rawCdpAlive()) return false;
@@ -1032,6 +1044,25 @@ async function actViaRawCDP(cmd, tab) {
     }
     if (cmd.goto && !openedTab) { const u = await raw.goto(cmd.goto); done.push(`goto ${cmd.goto}`); result.url = u; }
     else if (cmd.goto) { result.url = await raw.evaluate('location.href').catch(() => cmd.goto); }
+    // 🔴 This lane ignored `wait` entirely, so it read the page the instant the tab existed.
+    //    On an SPA that is before anything has rendered: measured 2026-10-01, a fresh tab on
+    //    x.com had a title at 6s and its 2522-character body at 11s — but the fallback read
+    //    it at ~0s and reported 0 chars. The caller then sees "the page did not load", which
+    //    is true at that instant and misleading as a conclusion.
+    // 🔵 Settle on CONTENT, not on a fixed sleep: poll until the body stops growing, bounded
+    //    by whatever `wait` the caller asked for. A quiet page still returns immediately.
+    if (cmd.goto || cmd.newtab || cmd.newwindow) {
+      const budget = Math.min(Number(cmd.wait) > 0 ? Number(cmd.wait) : 3000, 30000);
+      const deadline = Date.now() + budget;
+      let last = -1; let stable = 0;
+      while (Date.now() < deadline) {
+        await new Promise((r) => { setTimeout(r, 700); });
+        const len = await raw.evaluate('document.body ? document.body.innerText.length : 0')
+          .catch(() => -1);
+        if (len > 0 && len === last) { stable += 1; if (stable >= 2) break; } else { stable = 0; }
+        last = len;
+      }
+    }
     if (cmd.click) { await raw.click(cmd.click); done.push(`click ${cmd.click}`); }
     if (cmd.type) { await raw.type(cmd.type.text != null ? cmd.type.text : cmd.type); done.push('type'); }
     if (cmd.press) { await raw.press(cmd.press); done.push(`press ${cmd.press}`); }
@@ -1291,12 +1322,21 @@ async function act(cmd) {
   //    it would call connect() and hang again. Instead drive the page over a fresh raw-CDP
   //    websocket, which stays responsive when playwright's does not (measured 2026-09-04,
   //    zalman). This is the thin fallback: goto/eval/shot/press/read map 1:1; click is
-  //    best-effort by coordinate. A newtab/newwindow needs playwright, so those still error.
+  //    best-effort by coordinate.
+  // 🔴 newtab/newwindow USED to be excluded here on the grounds that they "need playwright".
+  //    That stopped being true in v0.18.0, when raw CDP gained createTab (Target.createTarget
+  //    on the browser-scoped socket) — but this condition was never updated. The result was a
+  //    trap with no way out: once playwright was down, the fallback refused to work for an
+  //    agent with no live tab ("no tab stamped for X"), and the one command that would have
+  //    created a tab was routed to the playwright path that was down. Measured 2026-10-01
+  //    with playwright 1.63.0 against Chrome 154: connectOverCDP timed out at 120s while raw
+  //    CDP opened a tab and rendered x.com in 6s. The browser was fine; the only road out
+  //    was closed. Let the fallback do what it is actually capable of.
   // 🔵 Before dropping to the raw-CDP fallback, try to climb out of it: if playwright has
   //    recovered (intermittent connection), reconnect and rejoin the normal path. Runs only
   //    while reconnectFailed is set, so the healthy path never pays for it. (idifference 2026-09-06)
   if (reconnectFailed) { await tryRecoverFromFallback(); }
-  if (reconnectFailed && !cmd.newtab && !cmd.newwindow) {
+  if (reconnectFailed) {
     return actViaRawCDP(cmd, tab);
   }
   // If account is given explicitly use it, otherwise look the URL up in the mapping.

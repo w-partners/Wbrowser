@@ -161,6 +161,25 @@ for i in $(seq 1 12); do
 done
 ```
 
+### 🔴 When playwright cannot pair with your Chrome — `WBROWSER_FORCE_RAWCDP=1`
+
+Chrome sometimes moves ahead of playwright. Measured 2026-10-01: playwright 1.63.0 (the
+latest; it bundles Chrome 153) against Chrome 154 — `connectOverCDP` failed even at **120s**
+while raw CDP opened a tab and rendered the page in **6s**. There is no newer playwright.
+
+🔵 Symptoms: commands succeed intermittently, blank pages (`len=0`) appear among good ones,
+   and the log repeats `connectOverCDP timed out but raw CDP is up`.
+🔴 **Do not restart Chrome.** It answers raw CDP in 16-62ms — it is not the broken part.
+
+```bash
+wb down
+WBROWSER_FORCE_RAWCDP=1 node engine.js &   # start in the lane that works
+```
+This removes the ~24s every request spent discovering playwright was down. Measured: collection
+went from 1 success in 5 to **3 in 3**.
+🔵 The raw lane is narrower (click is coordinate-based). Unset the variable once playwright and
+Chrome pair again.
+
 ## Debugging a page
 
 ```bash

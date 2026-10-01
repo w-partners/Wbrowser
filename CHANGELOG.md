@@ -5,6 +5,48 @@ has the detail.
 
 ---
 
+## 0.27.0 — 2026-10-01
+
+### The raw-CDP lane is now a real way out, and you can start in it
+
+playwright 1.63.0 — **the latest release, which bundles Chrome 153** — could not attach to the
+installed Chrome 154. Measured: `connectOverCDP` timed out at **120s** while raw CDP opened a
+tab and rendered x.com in **6s**. There is no newer playwright to upgrade to.
+
+That left a trap with no exit, and three separate reasons it stayed shut:
+
+- **`newtab` was excluded from the fallback** on the grounds that it "needs playwright". That
+  stopped being true in v0.18.0, when raw CDP gained `createTab` — the condition was never
+  updated. So the fallback refused to serve an agent with no live tab, and the one command
+  that would have created a tab was routed to the path that was down.
+- **The fallback ignored `wait` entirely**, reading the page the instant the tab existed. On
+  an SPA that is before anything renders: a fresh x.com tab had its title at 6s and its body
+  at 11s, and the fallback read 0 characters at ~0s — then reported "the page did not load",
+  which was true at that instant and wrong as a conclusion. It now settles on content (polls
+  until the body stops growing, bounded by `wait`).
+- **Every request paid ~24s to discover playwright was down** before falling back, so the
+  first command of each session surfaced as an error. `WBROWSER_FORCE_RAWCDP=1` starts the
+  engine in the lane that works and stops it from retrying the pairing that does not.
+
+Verified end to end through the CLI: `wb collect https://x.com/<user> --count 8` now returns 8
+posts with exact metrics, **3 runs out of 3** — against 1 success in 5 before.
+
+🔵 Opt-in, because the raw lane is narrower (click is coordinate-based). When playwright and
+Chrome pair again, unset the variable; nothing else changes.
+
+### Correction to the 0.26.2 notes
+
+0.26.2 said collect "had never worked" in 0.23.0–0.26.0. The TDZ was indeed present in all
+four, but **`video` reached `result` only from 0.23.0 onward** — on 0.21.2 its handler returned
+early with its own object and was unaffected. A report of `wb video` succeeding on 2026-09-28
+is therefore consistent: that engine was running older code than the checkout on disk.
+
+That gap is its own quiet failure — **the version on disk is not the version in memory** — and
+`/health` already reports the running build. Trust that, not `package.json`, when judging what
+a measurement was taken against.
+
+---
+
 ## 0.26.3 — 2026-10-01
 
 ### Slow is not dead: three hardcoded timeouts made a busy host look like a broken browser
