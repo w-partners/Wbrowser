@@ -121,7 +121,16 @@ const tabs = new Map();          // name -> page
 //    WBROWSER_FORCE_RAWCDP=1 skips that toll: go straight to the lane that works.
 // 🔵 It is opt-in because the raw lane is narrower (click is coordinate-based). When
 //    playwright and Chrome pair again, unset it — nothing else changes.
-let reconnectFailed = process.env.WBROWSER_FORCE_RAWCDP === '1';
+const RAWCDP_PINNED = process.env.WBROWSER_FORCE_RAWCDP === '1';
+let reconnectFailed = RAWCDP_PINNED;
+// 🔴 Clearing the degraded flag must go through here. It was cleared in three places, and
+//    one of them (a successful connect during startup) silently un-pinned an engine the
+//    operator had deliberately pinned to raw CDP — the pin looked set and the next request
+//    still went down the playwright path that does not work here. Measured 2026-10-01:
+//    FORCE_RAWCDP=1 was in the process environment while a collect ran `via: "pw"` and
+//    timed out at 318s. A pin that can be revoked by the thing it is pinning against is
+//    not a pin.
+function clearDegraded() { if (!RAWCDP_PINNED) reconnectFailed = false; }
 // 🔴 Also guard against CONCURRENT reconnects. Requests arrive back-to-back, and the
 //    failure flag is only set AFTER the reconnect returns — so several requests can pass
 //    the gate and each start their own reconnect before any of them fails. Measured
@@ -244,7 +253,7 @@ async function tryRecoverFromFallback() {
   browser = b; ctx = c;
   tabs.clear();
   browser.on('disconnected', () => { browser = null; ctx = null; tabs.clear(); });
-  reconnectFailed = false;
+  clearDegraded();
   console.error(`[recover] ${new Date().toISOString()} playwright reconnected — leaving the raw-CDP fallback`);
   return true;
 }
@@ -253,7 +262,7 @@ async function tryRecoverFromFallback() {
 // whether it is still alive and reattach if it died — so we never fail silently
 // on a dead handle.
 async function connect(_reconnecting) {
-  if (browser && browser.isConnected()) { reconnectFailed = false; return; }
+  if (browser && browser.isConnected()) { clearDegraded(); return; }
   try {
     browser = await connectOverCDPBounded();
   } catch (e) {

@@ -5,6 +5,29 @@ has the detail.
 
 ---
 
+## 0.27.1 — 2026-10-01
+
+### Fixed: `WBROWSER_FORCE_RAWCDP=1` could be revoked by the thing it pins against
+
+The pin seeded `reconnectFailed`, but that flag was assigned `false` in three places — and one
+of them, a successful `connect()` during startup, cleared it. The engine then looked pinned
+(the variable was in its environment) while requests went down the playwright path the pin
+exists to avoid. Measured: a `collect` ran `via: "pw"` and timed out at **318s** on an engine
+started with the pin set.
+
+Clearing now goes through a single helper that honours the pin, and
+`test/rawcdp_pin.test.js` fails if a future edit adds another assignment. Verified by
+reintroducing the bug: red, then green on revert. A pinned engine now reports
+`"browser": false` on `/health` and stays there.
+
+🔵 **This was also a measurement error on my part.** The "3 runs of 3" quoted for 0.27.0 was
+taken against an engine still running 0.26.3 — the version on disk had moved, the process had
+not. `/health` reports the running build; that is the number a measurement is taken against,
+not `package.json`. The same confusion was raised about an earlier release note and recorded
+there, then repeated here within the hour.
+
+---
+
 ## 0.27.0 — 2026-10-01
 
 ### The raw-CDP lane is now a real way out, and you can start in it
