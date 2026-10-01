@@ -125,8 +125,22 @@ _needs_install() {
 }
 
 _post() {   # _post '<json>'
-  curl -s --max-time "${WIN_TIMEOUT:-45}" -X POST "$ENGINE/act" \
-    -H 'Content-Type: application/json' -d "$1"
+  # 🔴 A cut-off request must say it was cut off. curl exiting on --max-time prints NOTHING,
+  #    so the caller got an empty body and read it as "the page is empty" — which is the
+  #    opposite of what happened. Measured 2026-10-01 at load 41: a `goto` on x.com took
+  #    40.8s against a 45s limit, so the same command returned a full page or an empty
+  #    string depending on how busy the host was, with nothing to tell them apart.
+  #    🔵 Also raise the default: 45s was chosen on an idle machine, and these hosts are not
+  #    idle. WIN_TIMEOUT still overrides.
+  local _t="${WIN_TIMEOUT:-90}"
+  local _out _rc
+  _out=$(curl -s --max-time "$_t" -X POST "$ENGINE/act" \
+    -H 'Content-Type: application/json' -d "$1"); _rc=$?
+  if [ "$_rc" = 28 ]; then
+    printf '{"error":"the request was cut off after %ss by this client, not by the engine — the engine may still be working. On a loaded machine a goto on a heavy site (x.com) has been measured at 40s+. Raise it with WIN_TIMEOUT=180, or check load with `uptime`."}\n' "$_t"
+    return 0
+  fi
+  printf '%s' "$_out"
 }
 _pretty() { python3 "$DIR/fmt.py"; }
 

@@ -87,7 +87,16 @@ async function connectOverCDPBounded() {
   try {
     // Keep playwright's own (shorter) timeout too — a clean "websocket won't open" still
     // fails fast with its own message; the race only backstops the unbounded replay phase.
-    return await Promise.race([chromium.connectOverCDP(CDP, { timeout: 10000 }), hardStop]);
+    // 🔴 Do NOT hardcode this. It was 10000, while the outer race honoured
+    //    WBROWSER_CONNECT_TIMEOUT — so on a loaded machine the inner timeout always fired
+    //    first and raising the documented knob changed nothing. Measured 2026-10-01 at
+    //    load 41: Chrome answered raw CDP in 16ms while connectOverCDP kept timing out at
+    //    10s, the engine dropped to the fallback, recovered, and dropped again. The symptom
+    //    read as "the browser is broken" when the browser was idle and the machine was busy.
+    //    🔵 Keep it below the outer race so a clean "websocket won't open" still fails fast
+    //    with playwright's own message; the race only backstops the unbounded replay phase.
+    const inner = Math.max(5000, Math.floor(CONNECT_TIMEOUT * 0.8));
+    return await Promise.race([chromium.connectOverCDP(CDP, { timeout: inner }), hardStop]);
   } finally {
     clearTimeout(timer);
   }
@@ -512,9 +521,17 @@ async function getTab(name, accountHint, strict, agent, mustExist = false, _revi
     //    timed out with no explanation, and raw CDP hung on that tab too. The engine
     //    was healthy and said so; it was holding a dead tab.
     //    So knock before reusing. One cheap round trip beats an unexplained hang.
+    // 🔴 1500ms was hardcoded, and on a busy machine that is not "dead", it is "slow".
+    //    Measured 2026-10-01 at load 41: Chrome answered raw CDP in 16ms while this knock
+    //    kept missing its window, so healthy tabs were judged dead, the socket was dropped,
+    //    and the engine bounced between playwright and the fallback — which looked from
+    //    outside like "the browser randomly stops working". Slow is not dead (the same
+    //    distinction `/health` already makes for its own probe).
+    //    🔵 Tunable for loaded hosts; the default stays snappy for normal ones.
+    const KNOCK_MS = Number(process.env.WBROWSER_KNOCK_TIMEOUT || 4000);
     const alive = await Promise.race([
       existing.evaluate(() => true).catch(() => false),
-      new Promise((res) => { setTimeout(() => res(false), 1500); }),
+      new Promise((res) => { setTimeout(() => res(false), KNOCK_MS); }),
     ]);
     if (alive) return existing;
     // 🔴 The knock did not answer. Two very different causes, and they want opposite responses:

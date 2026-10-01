@@ -5,6 +5,35 @@ has the detail.
 
 ---
 
+## 0.26.3 — 2026-10-01
+
+### Slow is not dead: three hardcoded timeouts made a busy host look like a broken browser
+
+On a host at load 41–47, the same command returned a full page or an empty string depending
+on how busy the machine was. Chrome was answering raw CDP in 16–62ms the whole time; what
+varied was whether our own deadlines were met. Three of them could not be adjusted:
+
+- **`connectOverCDP` was pinned at 10s** while the outer race honoured
+  `WBROWSER_CONNECT_TIMEOUT`. The documented knob therefore changed nothing — the inner
+  timeout always fired first. It now scales with that setting.
+- **The tab liveness knock was pinned at 1500ms.** Past that, a healthy tab was judged dead,
+  the socket was dropped and reconnected, and the engine bounced between playwright and the
+  raw-CDP fallback. Now 4s, and `WBROWSER_KNOCK_TIMEOUT` overrides it.
+- **`wb`'s own curl limit was 45s** — and a measured `goto` on x.com took **40.8s** under
+  load. Now 90s via `WIN_TIMEOUT`.
+
+### `wb` now says when IT gave up, instead of printing nothing
+
+`curl --max-time` prints an empty body on expiry, so a cut-off request and an empty page were
+indistinguishable — the caller read "the page is empty", which is the opposite of what
+happened. A client-side cut-off now returns a message naming the limit, saying the engine may
+still be working, and pointing at `WIN_TIMEOUT` and `uptime`.
+
+🔵 None of this makes a saturated host fast. It makes the tool report *which* thing ran out
+of time, so the next person does not restart a browser that was never broken.
+
+---
+
 ## 0.26.2 — 2026-10-01
 
 ### Fixed: `wb down` killed every engine on the machine, not just yours
