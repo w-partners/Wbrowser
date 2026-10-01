@@ -1309,6 +1309,16 @@ async function act(cmd) {
     throw e;
   }
   const done = [];
+  // 🔴 Declare `result` HERE, before any handler runs — not at the end where the reply is
+  //    assembled. Handlers that report structured output (collect, video, googleLogin) write
+  //    `result.<x>` as they go, and those blocks sit hundreds of lines ABOVE the old
+  //    declaration. `const` has a temporal dead zone, so every one of them threw
+  //    "Cannot access 'result' before initialization" — a 500 on the whole request.
+  //    Measured 2026-10-01: collect, video (page form) and google-login were ALL dead on the
+  //    main path while `read` passed, which is why it looked like "the engine is hung" rather
+  //    than "three features throw". The fallback path never had this (its `result` is on the
+  //    first line), so the same code worked there — that is what made it look site-specific.
+  const result = {};
 
   if (cmd.newtab) {
     const c = await pickContext(acct, explicit);
@@ -1718,7 +1728,9 @@ async function act(cmd) {
   //    the afternoon hunting a client-side parser bug. There was no bug. `wb` attaches
   //    an agent name and the bare curl does not, so they were reading different tabs
   //    and nothing in either answer said so.
-  const result = { tab, agent: cmd.agent || null, account: usedProfile, done };
+  // 🔵 Merge, do not re-declare. Handlers above already wrote into `result` (collect/video/
+  //    googleLogin); assigning a fresh object here would silently drop their output.
+  Object.assign(result, { tab, agent: cmd.agent || null, account: usedProfile, done });
   if (evalResult !== undefined) result.result = evalResult;
   if (evalError) result.evalError = evalError;
   if (gotoHttpStatus !== undefined) result.httpStatus = gotoHttpStatus;

@@ -5,6 +5,34 @@ has the detail.
 
 ---
 
+## 0.26.1 — 2026-10-01
+
+### Fixed: `collect`, `video` and `google-login` threw on every request
+
+Three shipped features were returning `500 Cannot access 'result' before initialization` on
+the main path — **every time, for everyone** — and three releases went out on top of them.
+
+The handlers write `result.collect` / `result.video` / `result.googleLogin` as they run, but
+`result` was declared ~280 lines further down, where the reply is assembled. `const` has a
+temporal dead zone, so touching it earlier throws. It is now declared before any handler
+runs, and the reply assembly merges into it instead of replacing it.
+
+**Why it stayed hidden through three releases**, which is the part worth fixing:
+
+- **The fallback path was fine.** Its `result` is on the first line of its own function, so
+  the identical handler code worked there. That asymmetry made the failure look like a
+  site-specific or browser-state problem rather than a code one.
+- **`read` kept working**, so `/health` was green and a casual probe looked healthy. The
+  reported symptom was "the engine is hung".
+- **Every test we had was a pure test** — fake DOMs, no engine. This bug lives in the
+  engine's variable ordering, which no pure test can see. `test/result_tdz.test.js` now reads
+  `engine.js` as text and checks the ordering; verified by reintroducing the bug and watching
+  it go red.
+
+Found by a user report routed in from another agent, not by our own tests.
+
+---
+
 ## 0.26.0 — 2026-09-28
 
 ### `wb video` now transcribes — locally, with no API key
