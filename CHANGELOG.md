@@ -5,6 +5,49 @@ has the detail.
 
 ---
 
+## 0.30.0 — 2026-10-02
+
+### Starian control surface — read your browser from the tailnet, without opening it
+
+A new `starian.js` serves the Starian spec (`health` · `capabilities` · `read/<name>` ·
+`action/<name>` · MCP at `/api/starian/mcp`) on port **7982**, so a voice assistant or another
+agent can ask what this browser is doing.
+
+🔴 **It is a separate process on purpose.** The engine binds to `127.0.0.1` because reaching
+that port means driving every session the user is signed into — `docs/DESIGN-remote-handoff.md`
+calls this "the hard constraint that shapes every option", and the README says never expose it.
+Moving the engine to `0.0.0.0` to satisfy a spec would hand a logged-in Chrome to anything on
+the tailnet. This is the shim that design doc already recommended (Option A): it listens on the
+tailnet and talks to the engine over loopback.
+
+**What that means for the table:** everything exposed is read-only or narrowly scoped.
+`type`, `click`, `goto` and the credential endpoints are deliberately **not** reachable. Someone
+on the tailnet can see what the browser is doing; they cannot drive it.
+
+| reads | |
+|---|---|
+| `tabs` | open tabs and who is driving each — **query strings stripped**, since a tab URL can carry a session token |
+| `status` | engine build, whether Chrome is attached |
+| `windows` | windows and profiles |
+| `logins` | signed-in domains only (cookie values never leave the engine) |
+| `autoplay` | whether Chrome can make sound (reuses `scripts/check-autoplay.js`) |
+
+| actions | |
+|---|---|
+| `engine-restart` | `danger:true` — restarts the **engine**, never Chrome (it may be the user's window) |
+
+One table feeds both REST and MCP, so they cannot drift. `tools/list` is 1:1 with
+`capabilities`, verified. Danger actions are refused without `confirm:true` at **both** doors —
+a gate on one would be no gate. Access is tailnet (100.64.0.0/10) and loopback only; every call
+is written to `starian-audit.log` with `by`, including refusals.
+
+🔵 Fixed during the build, twice over, in the same two ways this project keeps failing:
+a 30s engine timeout called a healthy engine dead (it answered in 35.9s — *slow is not dead*),
+and the first version replaced the engine's full diagnosis with `engine returned 500`
+(*the value existed and the screen dropped it*).
+
+---
+
 ## 0.29.1 — 2026-10-02
 
 Same reporter, same day, measured on their own machine: 0.29.0's tab recovery **did not work where
