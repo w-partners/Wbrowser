@@ -84,11 +84,25 @@ function engineCall(method, p, body, timeoutMs = ENGINE_TIMEOUT) {
 //    screen dropped it, sending the reader to the wrong layer.
 function engineFail(r) {
   const why = (r.json && (r.json.error || r.json.hint)) || r.error || r.raw || null;
-  return {
+  const out = {
     ok: false,
     error: why || `engine returned ${r.status}`,
     engineStatus: r.status || null,
   };
+  // 🔴 Pass the engine's words through, but do not pass through a prescription that cannot
+  //    work. The engine's generic advice is "restart the engine" — and when playwright simply
+  //    cannot attach to this Chrome version, no restart fixes it. Measured 2026-10-02: a remote
+  //    caller was told to restart the engine three times for reads that could never succeed
+  //    that way. A wrong instruction is worse than silence: it gets followed.
+  if (/connectOverCDP|Timeout \d+ms exceeded|could not attach/i.test(String(why || ''))) {
+    out.cause = 'the engine could not attach to Chrome (playwright ↔ Chrome version mismatch '
+      + 'does this; measured 2026-10-02 with playwright 1.63 against Chrome 154)';
+    out.restartWontHelp = true;
+    out.whatWorks = 'reads that go through Chrome directly (status, autoplay, tabs) still work. '
+      + 'This one needs playwright, so it needs a playwright that matches this Chrome — '
+      + 'upgrade playwright, or run Chrome at the version it bundles.';
+  }
+  return out;
 }
 
 // Is the engine's socket accepting connections? Cheap, and it answers a different question
@@ -165,6 +179,9 @@ const READS = {
   },
   windows: {
     label: '브라우저 창·프로파일 목록',
+    // 🔵 Say up front which reads need the attach. A caller that knows this can tell
+    //    "the browser is broken" from "this one read needs something the others do not".
+    needsAttach: true,
     async run() {
       const r = await engineCall('GET', '/windows');
       if (r.status !== 200 || !r.json) return engineFail(r);
@@ -173,6 +190,7 @@ const READS = {
   },
   logins: {
     label: '로그인된 사이트 (도메인만, 쿠키 값 없음)',
+    needsAttach: true,          // cookies live in the playwright context, not in /json/list
     async run() {
       const r = await engineCall('GET', '/logins');
       if (r.status !== 200 || !r.json) return engineFail(r);
@@ -233,7 +251,12 @@ function safeUrl(u) {
   if (!u) return null;
   try {
     const x = new URL(u);
-    return `${x.origin}${x.pathname}${x.search ? '?…' : ''}`;
+    // 🔴 `origin` is the string "null" for file:, data: and blob: URLs, which produced
+    //    "null/C:/Users/..." in the tab list (measured 2026-10-02). A reader cannot tell
+    //    whether that means "no origin" or "the list is broken", so build from the protocol
+    //    when there is no real origin.
+    const base = x.origin && x.origin !== 'null' ? x.origin : `${x.protocol}//`;
+    return `${base}${x.pathname}${x.search ? '?…' : ''}`;
   } catch { return String(u).slice(0, 80); }
 }
 
@@ -275,7 +298,12 @@ function mcpTools() {
   for (const [name, r] of Object.entries(READS)) {
     tools.push({
       name: `read_${name.replace(/-/g, '_')}`,
-      description: r.label,
+      // 🔵 Same fact as capabilities.needsAttach, from the same table. An MCP client that only
+      //    sees tool descriptions would otherwise not know which reads can fail for a reason
+      //    that has nothing to do with the read itself.
+      description: r.needsAttach
+        ? `${r.label} — 엔진이 크롬에 attach 돼야 합니다(안 되면 실패합니다)`
+        : r.label,
       inputSchema: { type: 'object', properties: {}, required: [] },
     });
   }
@@ -404,7 +432,13 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === 'GET' && p === '/api/starian/capabilities') {
       send(res, 200, {
-        reads: Object.entries(READS).map(([name, r]) => ({ name, label: r.label })),
+        // 🔵 needsAttach travels with the capability, so a caller learns which reads depend on
+        //    playwright attaching BEFORE one of them fails. Knowing it afterwards, from a 502,
+        //    is what made a remote caller read "the browser is broken" from "this read needs
+        //    something the others do not" (javis, 2026-10-02).
+        reads: Object.entries(READS).map(([name, r]) => ({
+          name, label: r.label, needsAttach: !!r.needsAttach,
+        })),
         actions: Object.entries(ACTIONS).map(([name, a]) => ({
           name, label: a.label, params: a.params || [], danger: !!a.danger,
         })),

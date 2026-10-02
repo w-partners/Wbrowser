@@ -2143,7 +2143,39 @@ const server = http.createServer(async (req, res) => {
       return res.end(JSON.stringify({ windows: out }, null, 2));
     }
     if (req.method === 'GET' && req.url === '/tabs') {
-      await connect();
+      // 🔴 Listing tabs must not require playwright. The list is what someone reads to find
+      //    out what happened — including when the attach is the thing that is broken, which is
+      //    exactly when they need it most. Measured 2026-10-02: /tabs returned 502 "restart the
+      //    engine" to a remote caller while Chrome was holding 35 tabs, and no restart would
+      //    have helped (playwright 1.63 cannot attach to Chrome 154). Chrome's own /json/list
+      //    answers this question directly, so ask it when we cannot attach.
+      //    🔵 Degraded on purpose: no `named` tabs and no drivenBy, because those live in the
+      //       engine's own map, and `via` says so rather than letting the caller assume.
+      try {
+        await connect();
+      } catch (e) {
+        let targets;
+        try {
+          targets = await require('./rawcdp').getJSON(`${CDP}/json/list`);
+        } catch {
+          throw e;                     // Chrome is not there either — report the original cause
+        }
+        const pages = targets.filter((t) => t.type === 'page');
+        const named = [...tabs.entries()].filter(([, p]) => { try { return !p.isClosed(); } catch { return false; } })
+          .map(([name, p]) => { try { return { name, url: p.url() }; } catch { return null; } })
+          .filter(Boolean);
+        return res.end(JSON.stringify({
+          open: pages.map((t, i) => ({
+            n: i + 1, id: t.id, url: t.url, title: t.title || null,
+            drivenBy: null,            // 🔵 unknown on this path, not "nobody"
+          })),
+          named,
+          via: 'rawcdp',
+          degraded: 'listed over raw CDP because the engine could not attach to Chrome; '
+            + '"drivenBy" is unknown on this path (it lives in the engine, not in Chrome)',
+          attachError: String(e.message || e).split('\n')[0],
+        }, null, 2));
+      }
       // 🔵 Number the tabs. The number is what you hand to /take — it is how a person
       //    points at the screen they were on and says "carry on from here".
       const pages = ctx.pages().filter((p) => !p.isClosed());

@@ -5,6 +5,47 @@ has the detail.
 
 ---
 
+## 0.31.1 — 2026-10-02
+
+### The tab list no longer needs the attach that may be broken
+
+`GET /tabs` started with `await connect()`, so when playwright could not attach it returned
+502 — telling a remote caller to restart the engine, which cannot fix a version mismatch. The
+tab list is what someone reads to find out *what happened*, including when the attach is the
+thing that broke, so it now falls back to Chrome's own `/json/list`.
+
+The fallback is degraded on purpose and says so: `via: "rawcdp"`, and `drivenBy` comes back
+`null` rather than claiming nobody is driving a tab — that mapping lives in the engine, not in
+Chrome.
+
+### An error that cannot be acted on no longer pretends it can
+
+The engine's generic advice is "restart the engine". When playwright simply cannot attach to
+this Chrome version, no restart helps. Reads that fail that way now carry:
+
+```
+"restartWontHelp": true,
+"cause": "the engine could not attach to Chrome (playwright ↔ Chrome version mismatch …)",
+"whatWorks": "reads that go through Chrome directly (status, autoplay, tabs) still work …"
+```
+
+A wrong instruction is worse than silence, because it gets followed.
+
+### Which reads need the attach is now stated up front
+
+`capabilities` and the MCP tool descriptions both carry `needsAttach`, from the same table. A
+caller learns that `windows` and `logins` depend on playwright **before** one of them fails,
+instead of inferring "the browser is broken" from a 502 on two reads out of five.
+
+### Fixed: a local file tab was listed as `null/C:/Users/...`
+
+`URL.origin` is the literal string `"null"` for `file:`, `data:` and `blob:`, so stripping the
+query string left a path with `null` glued to the front. A reader cannot tell that from a broken
+list. `safeUrl` now builds from the protocol when there is no real origin, and `test/safeurl.test.js`
+pins both halves — the query string must still never survive, because this string is logged.
+
+---
+
 ## 0.31.0 — 2026-10-02
 
 ### `wb status` and `/health` no longer tell you to start a browser that is already running

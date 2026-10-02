@@ -12,6 +12,23 @@ cd "$(dirname "$0")/.."
 
 fail=0
 
+# 🔴 Say whether Chrome is here BEFORE running anything. A few tests need a live Chrome, and
+#    without this the suite turns red on a machine where nothing is wrong — which trains people
+#    to ignore red. Measured 2026-10-02: rawcdp.test.js #8/#9 failed with ECONNREFUSED 9222
+#    simply because Chrome was closed, and the runner reported it the same way it reports a bug.
+#    🔵 The point is not to hide those failures; it is to label them, so "2 failing" means
+#       something different from "2 skipped because Chrome is closed".
+CDP="${WBROWSER_CDP:-http://127.0.0.1:9222}"
+if curl -s -o /dev/null --max-time 3 "$CDP/json/version" 2>/dev/null; then
+  CHROME=up
+  echo "== Chrome: up ($CDP) — browser-dependent tests will run =="
+else
+  CHROME=down
+  echo "== Chrome: NOT running ($CDP) =="
+  echo "   Tests that need a live browser will fail with ECONNREFUSED. That is the environment,"
+  echo "   not the code. Start it with 'node launch.js' to exercise them, or read past those."
+fi
+
 echo "== node --test (the whole suite) =="
 if npm test --silent; then
   echo "  ✅ node --test"
@@ -35,5 +52,14 @@ for t in test/*.test.js; do
   fi
 done
 
-[ "$fail" -eq 0 ] && echo "== all green ==" || echo "== FAILURES ABOVE =="
+if [ "$fail" -eq 0 ]; then
+  echo "== all green =="
+elif [ "$CHROME" = down ]; then
+  # 🔵 Still exit non-zero — a red suite is red. But name the likely cause, so nobody spends
+  #    an hour on a bug that is a closed browser.
+  echo "== FAILURES ABOVE — note Chrome is NOT running; check whether every failure is an"
+  echo "   ECONNREFUSED on $CDP before treating these as code defects =="
+else
+  echo "== FAILURES ABOVE =="
+fi
 exit "$fail"

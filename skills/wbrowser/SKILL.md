@@ -629,3 +629,17 @@ Reads: `tabs` `status` `windows` `logins` `autoplay`. Tab URLs come back without
 The only action is `engine-restart` (`{"confirm":true}`), which restarts the **engine** and never
 touches Chrome. There is no `type`/`click`/`goto` here on purpose — this surface cannot drive the
 browser. `POST /api/starian/mcp` exposes the same table as MCP tools.
+
+### Which reads need the attach
+
+`capabilities` carries `needsAttach` per read, and so do the MCP tool descriptions:
+
+| read | needsAttach | why |
+|---|---|---|
+| `tabs` `status` `autoplay` | no | answered from Chrome directly, so they work even when the engine cannot attach |
+| `windows` `logins` | **yes** | profiles and cookies live in the playwright context, not in `/json/list` |
+
+🔴 A read that fails because of the attach says `restartWontHelp: true` and names what still
+works. Restarting the engine does not fix a playwright/Chrome version mismatch, so being told
+to restart is a wrong instruction — and a wrong instruction is worse than silence, because it
+gets followed.
