@@ -91,6 +91,22 @@ function engineFail(r) {
   };
 }
 
+// Is the engine's socket accepting connections? Cheap, and it answers a different question
+// from /health: "is the process alive" rather than "is the browser attached".
+// 🔵 A TCP connect is the one probe that cannot be slowed down by what the engine is doing.
+function enginePortOpen(timeoutMs = 2000) {
+  return new Promise((resolve) => {
+    const net = require('net');
+    const u = new URL(ENGINE);
+    const sock = net.connect({ host: u.hostname, port: Number(u.port) });
+    const done = (v) => { try { sock.destroy(); } catch { /* already gone */ } resolve(v); };
+    sock.setTimeout(timeoutMs);
+    sock.on('connect', () => done(true));
+    sock.on('timeout', () => done(false));
+    sock.on('error', () => done(false));
+  });
+}
+
 // --- THE TABLE — one definition, used by REST and MCP alike ----------------
 // 🔴 The spec's first principle: "표 하나, 문 둘" (one table, two doors). REST and MCP must
 //    not drift, so neither owns the list — this does.
@@ -313,13 +329,36 @@ const server = http.createServer(async (req, res) => {
 
   try {
     if (req.method === 'GET' && p === '/api/starian/health') {
-      const eng = await engineCall('GET', '/health');
-      const engineOk = eng.status === 200 && eng.json && eng.json.ok === true;
+      // 🔴 health must answer FAST. It is a liveness probe that callers poll with their own
+      //    short timeout — Starian marked this site red because our 90s patience outlasted
+      //    its patience, so "engine is slow" was reported to the user as "site is down".
+      //    A slow engine is a finding to report, not a reason to stop answering.
+      const eng = await engineCall('GET', '/health', null,
+        Number(process.env.WBROWSER_STARIAN_HEALTH_TIMEOUT || 8000));
+      let engineOk = eng.status === 200 && eng.json && eng.json.ok === true;
+      // 🔴 If the engine was merely slow, check whether it is LISTENING before calling the
+      //    site down. The engine's /health attaches to Chrome, which on a loaded host can
+      //    take 30s+ — but a socket that accepts connections is alive by any honest reading.
+      //    Without this, Starian showed this site red while every read still worked, which
+      //    tells the user the wrong thing about a browser that is fine.
+      let slowButUp = false;
+      if (!engineOk && eng.status === 0) {
+        slowButUp = await enginePortOpen();
+        if (slowButUp) engineOk = true;
+      }
       const browserOk = engineOk && !!eng.json.browser;
       send(res, 200, {
         ok: engineOk, site: SITE, owner: OWNER, version: VERSION,
         checks: [
-          { name: '엔진(7981)', ok: engineOk, detail: engineOk ? (eng.json.build || null) : (eng.error || `status ${eng.status}`) },
+          { name: '엔진(7981)', ok: engineOk,
+            // 🔵 Say WHICH failure it is. "did not answer in 8s" and "refused the connection"
+            //    send a reader to opposite places; collapsing them into one red dot is how a
+            //    healthy-but-busy engine gets restarted.
+            detail: slowButUp
+              ? 'listening but slow to answer /health (it attaches to Chrome); reads still work'
+              : engineOk ? (eng.json.build || null)
+              : (eng.error ? `${eng.error} — may be slow rather than down; read/status waits longer`
+                : `status ${eng.status}`) },
           { name: '크롬 연결', ok: browserOk, detail: browserOk ? null : 'Chrome not attached (wb up)' },
         ],
       });
