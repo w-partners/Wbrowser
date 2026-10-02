@@ -107,6 +107,31 @@ function enginePortOpen(timeoutMs = 2000) {
   });
 }
 
+// 🔴 health must be FAST, because it is polled by a caller with its own short timeout.
+//    Measured 2026-10-02: the engine's /health attaches to Chrome and took 38.5s under load,
+//    so our 8s probe always expired and health answered in 8.9s — and Starian, polling with a
+//    shorter patience, showed this site red while every read worked. The fix is not a longer
+//    timeout on either side; it is to stop making a liveness probe wait on an attach.
+//
+//    So: a TCP connect decides alive-or-dead (it cannot be slowed by what the engine is doing),
+//    and the engine's own answer is refreshed in the BACKGROUND. health reports the last answer
+//    with its age, never blocking on a new one.
+//    🔵 An aged answer is reported AS aged. Serving a stale value as current is the censorship
+//       failure — the reader is told something is true now when nobody checked.
+let lastEngine = { at: 0, json: null, error: 'not probed yet' };
+let probing = false;
+function refreshEngine() {
+  if (probing) return;                      // one prober, not one per poll
+  probing = true;
+  engineCall('GET', '/health', null, 60000)
+    .then((r) => {
+      if (r.status === 200 && r.json) lastEngine = { at: Date.now(), json: r.json, error: null };
+      else lastEngine = { at: Date.now(), json: null, error: r.error || `status ${r.status}` };
+    })
+    .catch((e) => { lastEngine = { at: Date.now(), json: null, error: String(e.message || e) }; })
+    .finally(() => { probing = false; });
+}
+
 // --- THE TABLE — one definition, used by REST and MCP alike ----------------
 // 🔴 The spec's first principle: "표 하나, 문 둘" (one table, two doors). REST and MCP must
 //    not drift, so neither owns the list — this does.
@@ -333,20 +358,25 @@ const server = http.createServer(async (req, res) => {
       //    short timeout — Starian marked this site red because our 90s patience outlasted
       //    its patience, so "engine is slow" was reported to the user as "site is down".
       //    A slow engine is a finding to report, not a reason to stop answering.
-      const eng = await engineCall('GET', '/health', null,
-        Number(process.env.WBROWSER_STARIAN_HEALTH_TIMEOUT || 8000));
-      let engineOk = eng.status === 200 && eng.json && eng.json.ok === true;
-      // 🔴 If the engine was merely slow, check whether it is LISTENING before calling the
-      //    site down. The engine's /health attaches to Chrome, which on a loaded host can
-      //    take 30s+ — but a socket that accepts connections is alive by any honest reading.
-      //    Without this, Starian showed this site red while every read still worked, which
-      //    tells the user the wrong thing about a browser that is fine.
-      let slowButUp = false;
-      if (!engineOk && eng.status === 0) {
-        slowButUp = await enginePortOpen();
-        if (slowButUp) engineOk = true;
-      }
-      const browserOk = engineOk && !!eng.json.browser;
+      // 🔵 Fast path only: a TCP connect, plus whatever the background prober last learned.
+      const up = await enginePortOpen(2000);
+      refreshEngine();                       // kick the slow probe; do NOT await it
+      const ageMs = lastEngine.at ? Date.now() - lastEngine.at : null;
+      const FRESH_MS = 60000;
+      const fresh = lastEngine.json && ageMs !== null && ageMs < FRESH_MS;
+      const eng = { status: fresh ? 200 : 0, json: fresh ? lastEngine.json : null,
+        error: fresh ? null : (lastEngine.error || 'engine /health not yet observed') };
+      // 🔴 Three states, not two. `answered` means the engine replied; `up` means it is alive.
+      //    They differ exactly when the host is loaded: the engine's /health attaches to Chrome,
+      //    which takes 30s+ here, so it does not answer in 8s — but its socket accepts
+      //    connections, and every read still works. Calling that "down" told the user to
+      //    restart a browser that was fine.
+      //    🔴 Keep them in SEPARATE variables. Folding "up" back into "answered" is what broke
+      //       this endpoint: the line below reads eng.json, which only exists if it ANSWERED.
+      const answered = fresh && eng.json.ok === true;
+      const slowButUp = !answered && up;
+      const engineOk = answered || slowButUp;
+      const browserOk = answered && !!eng.json.browser;
       send(res, 200, {
         ok: engineOk, site: SITE, owner: OWNER, version: VERSION,
         checks: [
@@ -355,11 +385,18 @@ const server = http.createServer(async (req, res) => {
             //    send a reader to opposite places; collapsing them into one red dot is how a
             //    healthy-but-busy engine gets restarted.
             detail: slowButUp
-              ? 'listening but slow to answer /health (it attaches to Chrome); reads still work'
-              : engineOk ? (eng.json.build || null)
+              ? `listening; its own /health has not answered within ${FRESH_MS / 1000}s `
+                + `(it attaches to Chrome, which is slow under load) — reads still work`
+                + (ageMs !== null ? `; last answered ${Math.round(ageMs / 1000)}s ago` : '')
+              : answered ? (eng.json.build || null)
               : (eng.error ? `${eng.error} — may be slow rather than down; read/status waits longer`
                 : `status ${eng.status}`) },
-          { name: '크롬 연결', ok: browserOk, detail: browserOk ? null : 'Chrome not attached (wb up)' },
+          // 🔵 Unmeasured is not the same as attached-nothing. If the engine never answered we
+          //    do not know about Chrome, and saying "run wb up" would be a guess.
+          { name: '크롬 연결', ok: browserOk,
+            detail: browserOk ? null
+              : answered ? 'Chrome not attached (wb up)'
+              : 'not measured — only the engine can see Chrome, and it has not answered yet' },
         ],
       });
       return;

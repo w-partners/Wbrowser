@@ -59,6 +59,19 @@ function makeSandbox(overrides) {
     Date,
     Promise,
     setTimeout,
+    // 🔴 The function reads process.env on its first line (the raw-CDP pin, v0.27.1). A sandbox
+    //    without `process` makes it throw ReferenceError, and because this file runs under
+    //    node:test — which exits 0 even with failures on node 22 — three tests failed silently
+    //    for a day. Give the sandbox the env the caller controls, and nothing else.
+    process: { env: overrides.env || {} },
+    // 🔵 The real clearDegraded refuses to clear while pinned (engine.js:138). Mirroring that
+    //    here keeps the sandbox honest: a stub that always cleared would let a pinned engine
+    //    "recover" in the test and pass, which is the exact bug the pin prevents.
+    clearDegraded: () => {
+      if ((overrides.env || {}).WBROWSER_FORCE_RAWCDP === '1') return;
+      state.reconnectFailed = false;
+      sandbox.reconnectFailed = false;
+    },
   };
   vm.createContext(sandbox);
   vm.runInContext(`var tryRecoverFromFallback = ${fnSrc}; globalThis.__fn = tryRecoverFromFallback;`, sandbox);
@@ -202,4 +215,40 @@ test('revive succeeds → does NOT leave the engine marked degraded', async () =
   const ok = await made.run(true);
   assert.strictEqual(ok, true, 'revive reports success when connect reattached a live browser');
   assert.strictEqual(made.state.reconnectFailed, false, 'a successful revive leaves the engine healthy');
+});
+
+// ---- the raw-CDP pin ------------------------------------------------------
+// 🔴 WBROWSER_FORCE_RAWCDP=1 exists because playwright 1.63 cannot attach to Chrome 154
+//    (measured 2026-10-02: connectOverCDP timed out at 120s while /json/list answered in 13ms).
+//    The pin is only useful if NOTHING can revoke it — a recovery path that clears it puts the
+//    engine back on the broken route on its own, and the operator who set the flag is not there
+//    to notice. So: when pinned, recovery must decline before it probes anything.
+test('pinned to raw CDP → recovery declines without touching Chrome or playwright', async () => {
+  let probed = false;
+  let connected = false;
+  const { run } = makeSandbox({
+    env: { WBROWSER_FORCE_RAWCDP: '1' },
+    reconnectFailed: true,
+    rawCdpAlive: async () => { probed = true; return true; },
+    connectOverCDPBounded: async () => { connected = true; return fakeBrowser(); },
+  });
+  const out = await run();
+  assert.strictEqual(out, false, 'a pinned engine must stay on the raw-CDP path');
+  assert.strictEqual(probed, false, 'it should not even probe — the decision needs no evidence');
+  assert.strictEqual(connected, false,
+    'attempting connectOverCDP is what the pin exists to prevent; each attempt also adds a '
+    + 'utility world inside Chrome, so probing makes the original problem worse');
+});
+
+test('not pinned → recovery behaves normally (the pin is the only thing that stops it)', async () => {
+  let connected = false;
+  const { run } = makeSandbox({
+    env: {},                       // no pin
+    reconnectFailed: true,
+    rawCdpAlive: async () => true,
+    connectOverCDPBounded: async () => { connected = true; return fakeBrowser(); },
+  });
+  await run();
+  assert.strictEqual(connected, true,
+    'without the pin, recovery must still try — otherwise the test above proves nothing');
 });

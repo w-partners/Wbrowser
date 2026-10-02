@@ -590,6 +590,48 @@ Override with `WBROWSER_CHROME=/path/to/chrome` if detection fails.
 
 ---
 
+## Watching it from another machine (read-only)
+
+The engine binds `127.0.0.1` on purpose: it holds a browser you are logged into, and that is not
+something to put on a network. But *seeing* what it is doing is safe, so there is a separate
+read-only surface for that.
+
+```bash
+node starian.js          # port 7982; tailnet + loopback only, no token
+```
+
+```bash
+curl http://<host>:7982/api/starian/health
+curl http://<host>:7982/api/starian/read/tabs
+```
+
+| Endpoint | What it gives |
+|---|---|
+| `GET /api/starian/health` | engine alive, Chrome attached, build. Answers in milliseconds. |
+| `GET /api/starian/capabilities` | the table every other route is derived from |
+| `GET /api/starian/read/{tabs,status,windows,logins,autoplay}` | the five readable things |
+| `POST /api/starian/action/engine-restart` | restarts **the engine**; needs `{"confirm":true}` |
+| `POST /api/starian/mcp` | the same table as MCP tools (JSON-RPC 2.0) |
+
+**What it deliberately cannot do.** There is no `type`, no `click`, no `goto`, nothing that reads
+or fills credentials. You cannot drive the browser through this surface, only look at it. The one
+action restarts the engine and **never touches Chrome** — Chrome may be your own window, with your
+own tabs in it.
+
+Other things it does on purpose:
+
+- Tab URLs come back with their query strings removed. Tokens travel in query strings.
+- Every call is appended to `~/.local/state/wbrowser/starian-audit.log`, **including the ones it
+  refuses**. A refusal that leaves no trace is indistinguishable from a request nobody made.
+- Access is limited to loopback and `100.64.0.0/10` (a tailnet). There is no token, because on a
+  tailnet the network *is* the credential — and a token in a config file would be one more copy of
+  something worth stealing.
+
+If you want the MCP tool list, `tools/list` returns exactly the capability table above — the REST
+routes and the MCP tools are generated from one source, so they cannot drift apart.
+
+---
+
 ## Security
 
 This tool drives a browser that holds **all your logins**. Treat it accordingly.
@@ -637,6 +679,8 @@ This tool drives a browser that holds **all your logins**. Treat it accordingly.
 | `WIN_TAB` | `main` | Which of that agent's tabs to drive |
 | `WBROWSER_MCP_TOKEN` | — | **Required** for remote MCP |
 | `WBROWSER_NOTES` | — | Directory for daily work logs (optional) |
+| `WBROWSER_FORCE_RAWCDP` | — | `1` pins the engine to the raw-CDP path. Use it when playwright cannot attach to your Chrome version. Once set, nothing in the engine can revoke it. |
+| `WBROWSER_STARIAN_PORT` | `7982` | Port for the read-only control surface (see below) |
 
 ---
 
@@ -679,6 +723,24 @@ README does not claim what has not been run.)
 ---
 
 ## Known limitations
+
+**playwright may not be able to attach to a very new Chrome.** playwright ships against a specific
+Chrome build; when your installed Chrome is newer, `connectOverCDP` can time out while Chrome is
+perfectly healthy. Measured 2026-10-02: playwright 1.63 (Chrome 153) against Chrome 154 — the
+attach timed out at 120 s while Chrome's own `/json/list` answered in 13 ms.
+
+`wb status` and `/health` now say which of the two it is, instead of telling you to start a browser
+that is already running. The way through is to pin the raw-CDP path, which does not care what
+version Chrome is:
+
+```bash
+WBROWSER_FORCE_RAWCDP=1 node engine.js
+```
+
+`go`, `read`, `eval`, `shot` and `press` work on that path. `click` is coordinate-based and fails
+loudly rather than clicking nothing.
+
+
 
 - **No automated test suite.** CI checks syntax and a few invariants; everything that
   touches a real browser was measured by hand across four platforms. That does not

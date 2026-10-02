@@ -591,3 +591,41 @@ scripting a sweep), these came out of real use:
 
 - **The CDP port is not fixed — scan for it, never hardcode.** A number baked into a
   config goes stale the next launch.
+
+## When it says the browser is not running — check whether it is
+
+`wb status` and `/health` report **two separate facts** now:
+
+```
+"browser": false     ← the engine could not attach
+"chrome":  true      ← Chrome itself is up
+"openTabs": 29
+```
+
+🔴 **`browser:false` with `chrome:true` does not mean "launch a browser".** It means the attach
+failed while Chrome is fine. A playwright/Chrome version mismatch does exactly this — measured
+2026-10-02: playwright 1.63 timed out for 120 s against Chrome 154 while `/json/list` answered in
+13 ms, holding 29 tabs. The hint tells you which case you are in; read it rather than running
+`launch.js` on reflex.
+
+The way through a version mismatch, which no restart fixes:
+
+```bash
+WBROWSER_FORCE_RAWCDP=1 node engine.js
+```
+
+`go` · `read` · `eval` · `shot` · `press` work on that path. `click` is coordinate-based and fails
+loudly instead of clicking nothing. 🔵 Once set, nothing in the engine can clear the pin — a
+recovery path that silently returned to the broken route is a defect, not a feature.
+
+## Letting another machine watch (not drive)
+
+```bash
+node starian.js      # port 7982, read-only, tailnet + loopback, no token
+curl http://<host>:7982/api/starian/read/tabs
+```
+
+Reads: `tabs` `status` `windows` `logins` `autoplay`. Tab URLs come back without query strings.
+The only action is `engine-restart` (`{"confirm":true}`), which restarts the **engine** and never
+touches Chrome. There is no `type`/`click`/`goto` here on purpose — this surface cannot drive the
+browser. `POST /api/starian/mcp` exposes the same table as MCP tools.

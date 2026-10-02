@@ -315,4 +315,7 @@ class RawCDP {
   }
 }
 
-module.exports = { RawCDP, chooseCandidates, closeTarget };
+// 🔵 getJSON is exported so /health can ask Chrome directly whether it is there, without
+//    going through playwright — the one probe that stays honest when the attach is what
+//    is broken (measured 2026-10-02: /json/list answered in 13ms while attach timed out).
+module.exports = { RawCDP, chooseCandidates, closeTarget, getJSON };

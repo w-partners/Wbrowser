@@ -1951,15 +1951,37 @@ const server = http.createServer(async (req, res) => {
         //    Measured 2026-08-25: the generic hint was on screen dozens of times while
         //    the actual problem was stale playwright contexts, and it never pointed there.
         const stale = /stale playwright contexts/i.test(e.message || '');
+        // 🔴 ASK CHROME before saying it is not running. There is a third case the two
+        //    branches below did not cover: Chrome is up and answering raw CDP, but playwright
+        //    cannot attach for a reason that is neither "down" nor "stale contexts" —
+        //    a version mismatch does exactly this (measured 2026-10-02: playwright 1.63
+        //    bundles Chrome 153 and times out against Chrome 154, while /json/list returned
+        //    29 pages in 13ms). Saying "the browser is not running" there sends someone to
+        //    launch a browser that is already holding the master's 29 tabs, and the real
+        //    cause goes unnamed. One cheap HTTP call tells us which world we are in.
+        let chromeUp = null;      // null = we could not even ask
+        let chromePages = null;
+        try {
+          const probe = await require('./rawcdp').getJSON(`${CDP}/json/list`);
+          chromeUp = true;
+          chromePages = probe.filter((t) => t.type === 'page').length;
+        } catch { chromeUp = false; }
         return res.end(JSON.stringify({
           ok: true,               // the engine is alive
-          browser: false,         // we could not attach
+          browser: false,         // ...but WE could not attach to it
+          chrome: chromeUp,       // 🔵 a separate fact: is Chrome itself there?
+          openTabs: chromePages,
           cdp: CDP,
           build: BUILD, startedAt: STARTED_AT,
           hint: stale
             ? 'Do not retry — close Chrome fully and run "wb up". Chrome answers but '
               + 'cannot be attached to, and each further attempt makes it worse.'
-            : 'The browser is not running — start it with node launch.js.',
+            : chromeUp
+              ? `Chrome IS running (${chromePages} tabs) — do not start another one. `
+                + 'The engine cannot attach to it. Try "wb down && wb up" first; if that '
+                + 'does not help, set WBROWSER_FORCE_RAWCDP=1 to drive Chrome over raw CDP, '
+                + 'which does not depend on playwright matching Chrome\'s version.'
+              : 'The browser is not running — start it with node launch.js.',
           detail: e.message.split('\n')[0],
         }, null, 2));
       }

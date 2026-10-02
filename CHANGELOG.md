@@ -5,6 +5,68 @@ has the detail.
 
 ---
 
+## 0.31.0 — 2026-10-02
+
+### `wb status` and `/health` no longer tell you to start a browser that is already running
+
+If the engine could not attach to Chrome, `/health` said *"The browser is not running — start it
+with node launch.js"* — **while Chrome was up and holding 29 tabs.** Measured today: playwright
+1.63 bundles Chrome 153 and times out attaching to Chrome 154, and `/json/list` answered in 13 ms
+the whole time. So the one sentence on screen sent people to launch a second browser, and the real
+cause was never named.
+
+`/health` now **asks Chrome directly** before concluding anything, and reports two separate facts:
+
+```
+"browser": false,    ← we could not attach
+"chrome":  true,     ← but Chrome itself is there
+"openTabs": 29,
+"hint": "Chrome IS running (29 tabs) — do not start another one. The engine cannot attach
+         to it. Try \"wb down && wb up\" first; if that does not help, set
+         WBROWSER_FORCE_RAWCDP=1 to drive Chrome over raw CDP, which does not depend on
+         playwright matching Chrome's version."
+```
+
+Collapsing those two facts into one field was what made the engine unable to say *"it is there but
+I cannot reach it"* — the state it was actually in.
+
+### A control surface for a browser you cannot drive from it
+
+New `starian.js` (port 7982): read-only HTTP + MCP over the tailnet, so another machine can see
+what this browser is doing. **It cannot drive it.** `type`, `click`, `goto` and anything touching
+credentials are deliberately absent — the one action is `engine-restart`, which requires
+`confirm:true`, restarts only the engine, and never touches Chrome (it may be your window).
+
+- `GET /api/starian/read/{tabs,status,windows,logins,autoplay}` — tab URLs have their query
+  strings stripped, because tokens travel in query strings.
+- `POST /api/starian/mcp` — JSON-RPC 2.0. `tools/list` is derived from the same capability table
+  the REST routes use, so the two cannot drift apart.
+- Every call, **including every refusal**, is appended to
+  `~/.local/state/wbrowser/starian-audit.log` with who made it.
+- tailnet (100.64.0.0/10) and loopback only. The engine itself stays on 127.0.0.1.
+
+### `health` answers in 0.03 s instead of 8.9 s
+
+It was waiting on the engine, which waits on Chrome: 38.5 s under load here. A liveness probe that
+outlasts its caller's patience gets reported to the user as *"site is down"*. Now a TCP connect
+decides alive-or-dead, the engine's own answer is refreshed in the background, and an aged answer
+**is labelled with its age** rather than served as current. What was never measured says so instead
+of guessing.
+
+### Fixed: three tests failed for a day while the suite reported OK
+
+`test/fallback_recovery.test.js` uses `node:test`, which on node 22 prints `# fail 3` and **exits
+0**. A loop that judged by exit code called it OK. The failures were real: the raw-CDP pin added in
+0.27.1 reads `process.env` on its first line, and the test's vm sandbox had no `process`.
+
+- `scripts/test.sh` is now the way to run the suite. It reads each file's summary, not just its
+  status, so a runner that exits 0 with failures cannot hide them.
+- The pin's contract is now tested: when pinned, recovery must decline **without probing** —
+  each attach attempt leaves another utility world inside Chrome, so probing makes the original
+  problem worse.
+
+---
+
 ## 0.30.0 — 2026-10-02
 
 ### Starian control surface — read your browser from the tailnet, without opening it
