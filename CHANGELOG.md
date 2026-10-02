@@ -5,6 +5,49 @@ has the detail.
 
 ---
 
+## 0.28.0 — 2026-10-02
+
+### A page can speak again after a reload
+
+Chrome blocks autoplay until someone interacts with the page, and **a reload resets that**. So
+any page that talks — a voice assistant, an alert chime, a read-aloud UI — went silent after
+every refresh until a human clicked. Reported from a voice canvas that lost its audio on all
+**10** of that day's reloads; `audioBlocked()` was true immediately after `Page.reload`, and
+the only way back was injecting a synthetic keypress over CDP.
+
+An agent cannot click on the user's behalf, so from the agent's side that silence was both
+permanent and invisible: the page renders fine and reports no error.
+
+`launch.js` now passes `--autoplay-policy=no-user-gesture-required`.
+
+**Measured, one flag apart on the same Chrome 154:**
+
+| Chrome | AudioContext | |
+|---|---|---|
+| without the flag | `suspended → suspended` | 🔴 blocked |
+| with the flag | `running → running` | ✅ allowed |
+
+🔵 Safe here specifically because this is a dedicated automation profile the user opens
+deliberately, not their everyday browser. The flag removes the gesture requirement and grants
+nothing else.
+
+### `scripts/check-autoplay.js` — tell whether the Chrome you are talking to actually has it
+
+A flag in the source is not a flag in the running process: Chrome only picks it up on start,
+so an already-running browser keeps the old behaviour after an update. This probes a **fresh
+tab** (an existing tab may already hold a user gesture and would report a false pass) and
+exits 0 allowed / 1 blocked / 2 could-not-measure.
+
+```
+node scripts/check-autoplay.js                    # this machine
+node scripts/check-autoplay.js http://host:9222   # another one
+```
+
+🔴 **An existing Chrome must be restarted to pick this up.** Upgrading the package is not
+enough — check with the script above rather than assuming.
+
+---
+
 ## 0.27.1 — 2026-10-01
 
 ### Fixed: `WBROWSER_FORCE_RAWCDP=1` could be revoked by the thing it pins against

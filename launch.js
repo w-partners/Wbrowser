@@ -350,6 +350,18 @@ if (require.main !== module) return;
     //    comma-separated list. Adding a second flag would silently drop Translate.
     '--disable-features=Translate,OptimizationGuideModelDownloading,OptimizationHints,'
       + 'OptimizationHintsFetching,OptimizationTargetPrediction,OptimizationGuideOnDeviceModel',
+    // 🔴 Let pages play audio without a click. Chrome blocks autoplay until the user has
+    //    interacted with the page, and a reload resets that — so any page that talks (a
+    //    voice assistant, an alert chime, a read-aloud UI) goes silent after every refresh
+    //    until a human clicks. Reported 2026-10-02: a voice canvas lost its audio on all 10
+    //    of that day's reloads; `JarvisVoice.audioBlocked()` was true right after
+    //    `Page.reload`, and the only way back was a synthetic keypress injected over CDP.
+    //    An agent cannot click for the user, so without this the silence is permanent from
+    //    the agent's side — and silent, which is worse: the page looks fine.
+    // 🔵 Safe here specifically because this is a dedicated automation profile that the
+    //    user opens deliberately, not their everyday browser. The flag only removes the
+    //    gesture requirement; it grants no other capability.
+    '--autoplay-policy=no-user-gesture-required',
   ];
   if (wantHeadless) {
     // 🔵 For servers with no display. Existing login sessions still work, but a person
