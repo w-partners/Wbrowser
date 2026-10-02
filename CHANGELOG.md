@@ -7,7 +7,7 @@ has the detail.
 
 ## 0.29.1 — 2026-10-02
 
-Same reporter, same day,measured on their own machine: 0.29.0's tab recovery **did not work where
+Same reporter, same day, measured on their own machine: 0.29.0's tab recovery **did not work where
 the accident had happened**.
 
 ### The snapshot is now written by `launch.js`, not only the engine
