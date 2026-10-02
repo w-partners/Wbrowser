@@ -73,5 +73,56 @@ check('a long title is truncated, the URL never is', () => {
     'the URL is what gets reopened — truncating it would hand back a broken link');
 });
 
+
+// ---- launch.js wiring -----------------------------------------------------
+// 🔴 Structural, because the bug here was ORDER, not logic. Snapshotting before reporting
+//    makes "no record yet" impossible to observe: the fresh write satisfies the very check
+//    that was meant to warn about its absence. Measured 2026-10-02 — with the wrong order
+//    the warning never printed on a machine that had just lost its tabs.
+const fs = require('fs');
+const path = require('path');
+const LAUNCH = fs.readFileSync(path.join(__dirname, '..', 'launch.js'), 'utf8');
+const LAUNCH_LINES = LAUNCH.split('\n');
+const codeLine = (l) => {
+  const t = l.trim();
+  return t && !t.startsWith('//') && !t.startsWith('*');
+};
+
+check('launch.js reports missing tabs BEFORE taking a new snapshot, on every path', () => {
+  const calls = [];
+  LAUNCH_LINES.forEach((l, i) => {
+    if (!codeLine(l)) return;
+    if (/await\s+reportMissingTabs\(\)/.test(l)) calls.push({ i, what: 'report' });
+    if (/await\s+snapshotTabs\(\)/.test(l)) calls.push({ i, what: 'snapshot' });
+  });
+  assert.ok(calls.length >= 4,
+    `expected both calls on both paths (launch + ALREADY_UP); found ${calls.length}`);
+  // Walk in file order: every snapshot must be preceded by a report that is not yet paired.
+  let pendingReport = false;
+  for (const c of calls) {
+    if (c.what === 'report') { pendingReport = true; continue; }
+    assert.ok(pendingReport,
+      `snapshotTabs() at line ${c.i + 1} runs without a preceding reportMissingTabs() — `
+      + 'writing first hides "no record yet" from the person who needs it');
+    pendingReport = false;
+  }
+});
+
+check('launch.js writes the snapshot itself, not only the engine', () => {
+  // 🔴 The original design had only engine.js writing it, so a machine that runs Chrome
+  //    without the engine never built a record — and that was the machine that lost tabs.
+  assert.ok(/async function snapshotTabs\(\)/.test(LAUNCH),
+    'launch.js must take its own snapshot; relying on the engine leaves engine-less hosts blind');
+  assert.ok(/require\('\.\/tabsave'\)[\s\S]{0,200}\.save\(/.test(LAUNCH),
+    'snapshotTabs() should call tabsave.save()');
+});
+
+check('the healthy autoplay case prints something too', () => {
+  // 🔵 With only the failure path printing, "checked and fine" and "never checked" were the
+  //    same silence (reported 2026-10-02).
+  assert.ok(/autoplay\s+✅/.test(LAUNCH),
+    'a positive line must exist so a silent run is distinguishable from an unchecked one');
+});
+
 if (failures) { console.log(`\n${failures} failing`); process.exit(1); }
 console.log('\nall passing');

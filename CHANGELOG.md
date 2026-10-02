@@ -5,6 +5,48 @@ has the detail.
 
 ---
 
+## 0.29.1 — 2026-10-02
+
+Same reporter, same day,measured on their own machine: 0.29.0's tab recovery **did not work where
+the accident had happened**.
+
+### The snapshot is now written by `launch.js`, not only the engine
+
+0.29.0 wrote the open-tab list from the engine's `/health`. The machine that lost its tabs
+runs Chrome **without** the engine — so `tabs-*.json` never existed there, and the next
+restart would have lost tabs just as silently. A recovery aid that only exists where the
+accident does not happen is no aid at all.
+
+`launch.js` now takes its own snapshot on every run, so an engine-less host accumulates a
+record too.
+
+### "No record yet" is no longer the same silence as "nothing missing"
+
+With no snapshot file, 0.29.0 printed nothing — identical to a clean restart where every tab
+came back. On the machine that had just lost tabs. It now says so, and says a record is being
+started.
+
+🔴 **Order matters and was wrong first:** taking the snapshot before reporting made the warning
+impossible to observe — the fresh write satisfied the very check meant to flag its absence.
+Measured by deleting the file: with the old order the warning never printed. `reportMissingTabs()`
+now runs before `snapshotTabs()` on both paths, and a structural test fails if that is ever
+reversed.
+
+### The healthy autoplay case prints one line
+
+With only the failure path printing, *"checked and fine"* and *"never checked"* looked the same
+from outside — both a bare `ALREADY_UP`. One line buys the distinction:
+
+```
+autoplay    ✅ allowed (pages can speak without a click)
+```
+
+🔵 Three releases in a row now, the useful findings came from someone applying the previous one
+and reporting exactly what they saw. The pattern in all of them is the same: the tool was
+correct and said nothing, and silence read as success.
+
+---
+
 ## 0.29.0 — 2026-10-02
 
 Three follow-ups from a user applying 0.28.0 on another machine. Each is a place where the

@@ -240,11 +240,33 @@ async function autoplayGap() {
 //    only a person knows which those were. One line each, ready to paste.
 // 🔵 Called on BOTH paths — after a fresh launch and on ALREADY_UP. Staying silent about a
 //    tab that never came back is the same silence this exists to end.
+// Take the open-tab list while Chrome is up. Safe to call often; the module throttles
+// nothing, so callers pick their moments (launch, and the engine's /health).
+// 🔵 In launch.js this runs on every invocation — the cheap moment when we KNOW Chrome is
+//    answering, which is also the moment just before someone restarts it.
+async function snapshotTabs() {
+  try {
+    await require('./tabsave').save({
+      cdpBase: `http://127.0.0.1:${CDP_PORT}`,
+      stateDir: stateDir(),
+      cdpPort: CDP_PORT,
+    });
+  } catch { /* a convenience; never let it fail a launch */ }
+}
+
 async function reportMissingTabs() {
   try {
     const tabsave = require('./tabsave');
     const saved = tabsave.load({ stateDir: stateDir(), cdpPort: CDP_PORT });
-    if (!saved.length) return;
+    // 🔴 No record is not the same as nothing missing, and printing neither makes them
+    //    identical. Reported 2026-10-02: on a machine with no snapshot file, "0 tabs lost"
+    //    and "I have no idea what you had open" were both silence — on the machine that had
+    //    just lost tabs. Say which one it is.
+    if (!saved.length) {
+      console.log('🔵 No tab record yet, so nothing can be compared after a restart.');
+      console.log('   One is written each time this runs while Chrome is up — from now on.');
+      return;
+    }
     const openNow = await new Promise((res) => {
       const req = http.get({ host: '127.0.0.1', port: CDP_PORT, path: '/json/list', timeout: 4000 },
         (r) => { let b = ''; r.on('data', (d) => { b += d; }); r.on('end', () => { try { res(JSON.parse(b)); } catch { res([]); } }); });
@@ -344,8 +366,23 @@ if (require.main !== module) return;
       console.log('      the user opened. Check `wb tabs` first; note what is open, as reopening');
       console.log('      is not automatic.');
       console.log('   Verify after: node scripts/check-autoplay.js');
+    } else {
+      // 🔵 Say the good case out loud. Reported 2026-10-02: with only the bad path printing,
+      //    "checked and fine" and "never checked" looked identical from the outside — both
+      //    were a single ALREADY_UP line. One line buys that distinction.
+      console.log('autoplay    ✅ allowed (pages can speak without a click)');
     }
+    // 🔴 Write the snapshot HERE too, not only from the engine. Reported 2026-10-02: on the
+    //    very machine that lost its tabs, `tabs-*.json` never existed — the only writer was
+    //    the engine's /health, and that machine runs Chrome without the engine. A recovery
+    //    aid that only exists where the accident does not happen is no aid at all.
+    //    Chrome is up right now, which is exactly when the list is worth taking.
+    // 🔴 Report BEFORE snapshotting. Writing first makes "no record yet" impossible to
+    //    observe — the fresh write satisfies the check that was meant to warn about its
+    //    absence, so the one machine that needed the warning never saw it. Measured here
+    //    by deleting the file: with the old order the warning never printed.
     await reportMissingTabs();
+    await snapshotTabs();
     return;
   }
 
@@ -588,4 +625,10 @@ if (require.main !== module) return;
   console.log(`profile     ${udd}  (${PROFILE})`);
 
   await reportMissingTabs();
+  // 🔵 AFTER reporting, not before: right now the browser holds only the start page, and
+  //    writing that over the previous list would erase the very thing the next restart needs.
+  //    (tabsave also refuses to overwrite with an empty list, but order is the real guard.)
+  //    From here on each launch leaves a record, so a machine that never runs the engine
+  //    still accumulates one.
+  await snapshotTabs();
 })();
