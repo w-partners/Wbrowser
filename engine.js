@@ -60,6 +60,11 @@ function nextTabId() { tabSeq += 1; return tabSeq; }
 //    launch.js uses _PORT, and if the engine ignores it then whenever the user changes
 //    the port the engine silently attaches to the default 9222 (= someone else's
 //    browser). This actually went wrong that way.
+// 🔵 Tab snapshot state. The directory rule lives in launch.js (one definition, both
+//    processes) — requiring it here is safe because launch.js guards its own main block.
+let lastTabSnapshot = 0;
+const CDP_PORT_FOR_SNAPSHOT = process.env.WBROWSER_CDP_PORT || 9222;
+function stateDirFor() { return require('./launch').stateDir(); }
 const CDP = process.env.WBROWSER_CDP
   || `http://127.0.0.1:${process.env.WBROWSER_CDP_PORT || 9222}`;
 
@@ -1912,6 +1917,21 @@ const server = http.createServer(async (req, res) => {
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   try {
     if (req.method === 'GET' && req.url === '/health') {
+      // 🔵 Piggyback the open-tab snapshot on a call that already happens often, instead of
+      //    adding a timer. Chrome never gets to run anything on its way down (a restart to
+      //    apply a flag, a crash), so the list has to exist BEFORE it is needed — which means
+      //    writing it while things are fine. Throttled, best-effort, never blocks the reply.
+      //    Reported 2026-10-02: a restart left 1 of 2 tabs and the other survived only
+      //    because a person had written the URL down first.
+      try {
+        const now = Date.now();
+        if (now - lastTabSnapshot > 60000) {
+          lastTabSnapshot = now;
+          require('./tabsave')
+            .save({ cdpBase: CDP, stateDir: stateDirFor(), cdpPort: CDP_PORT_FOR_SNAPSHOT })
+            .catch(() => {});
+        }
+      } catch { /* a snapshot is a convenience; never let it affect /health */ }
       // 🔵 /health asks "is the engine alive". The browser not being up yet is not an
       //    engine error but a normal state — answer 200 and report it via browser:false.
       //    🔴 Returning 500 makes systemd / monitoring restart a perfectly healthy engine

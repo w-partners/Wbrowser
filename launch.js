@@ -173,6 +173,94 @@ const PROFILE_DIR = profileDir();
 
 // ---------------------------------------------------------------- waiting for CDP
 
+// Is the RUNNING Chrome missing the autoplay flag? Returns true only when we positively
+// measured that audio is blocked; a probe that cannot run returns false (say nothing rather
+// than cry wolf).
+// 🔵 Measures the capability instead of parsing a command line — that is what the flag is
+//    for, and it works the same whoever started the browser. The full version of this lives
+//    in scripts/check-autoplay.js; this is the cheap inline check for the launch path.
+async function autoplayGap() {
+  try {
+    const ver = await cdpVersion(2500);
+    if (!ver || !ver.webSocketDebuggerUrl) return false;
+    const ws = new WebSocket(ver.webSocketDebuggerUrl);
+    const opened = await new Promise((res) => {
+      ws.addEventListener('open', () => res(true), { once: true });
+      ws.addEventListener('error', () => res(false), { once: true });
+      setTimeout(() => res(false), 4000);
+    });
+    if (!opened) { try { ws.close(); } catch { /* already gone */ } return false; }
+    let id = 0;
+    const call = (method, params, sessionId) => new Promise((res) => {
+      const myId = ++id;
+      const msg = { id: myId, method, params };
+      if (sessionId) msg.sessionId = sessionId;
+      const on = (ev) => {
+        const x = JSON.parse(ev.data);
+        if (x.id === myId) { ws.removeEventListener('message', on); res(x.result || null); }
+      };
+      ws.addEventListener('message', on);
+      ws.send(JSON.stringify(msg));
+      setTimeout(() => { ws.removeEventListener('message', on); res(null); }, 12000);
+    });
+    // 🔴 A fresh tab. An existing one may already hold a user gesture and would report
+    //    "fine" on a Chrome that blocks every new page — the false pass this must avoid.
+    const t = await call('Target.createTarget', { url: 'about:blank' });
+    if (!t || !t.targetId) { ws.close(); return false; }
+    const a = await call('Target.attachToTarget', { targetId: t.targetId, flatten: true });
+    let blocked = false;
+    if (a && a.sessionId) {
+      await call('Runtime.enable', {}, a.sessionId);
+      const r = await call('Runtime.evaluate', {
+        expression: `(async () => {
+          const AC = window.AudioContext || window.webkitAudioContext;
+          if (!AC) return null;
+          const ctx = new AC();
+          try {
+            await Promise.race([ctx.resume(), new Promise((r) => setTimeout(r, 3000))]);
+            const s = ctx.state; ctx.close();
+            return s !== 'running';
+          } catch { try { ctx.close(); } catch { /* gone */ } return null; }
+        })()`,
+        returnByValue: true,
+        awaitPromise: true,
+      }, a.sessionId);
+      if (r && r.result && r.result.value === true) blocked = true;
+    }
+    await call('Target.closeTarget', { targetId: t.targetId });
+    ws.close();
+    return blocked;
+  } catch { return false; }
+}
+
+// 🔴 Chrome does not bring the old tabs back, and the person who had to restart it is the
+//    one who loses them. Reported 2026-10-02: a restart to apply a flag left 1 of 2 tabs, and
+//    the other survived only because someone had written the URL down first.
+// 🔵 Print, do not reopen: a tab closed on purpose before the restart should stay closed, and
+//    only a person knows which those were. One line each, ready to paste.
+// 🔵 Called on BOTH paths — after a fresh launch and on ALREADY_UP. Staying silent about a
+//    tab that never came back is the same silence this exists to end.
+async function reportMissingTabs() {
+  try {
+    const tabsave = require('./tabsave');
+    const saved = tabsave.load({ stateDir: stateDir(), cdpPort: CDP_PORT });
+    if (!saved.length) return;
+    const openNow = await new Promise((res) => {
+      const req = http.get({ host: '127.0.0.1', port: CDP_PORT, path: '/json/list', timeout: 4000 },
+        (r) => { let b = ''; r.on('data', (d) => { b += d; }); r.on('end', () => { try { res(JSON.parse(b)); } catch { res([]); } }); });
+      req.on('error', () => res([]));
+      req.on('timeout', () => { req.destroy(); res([]); });
+    });
+    const gone = tabsave.missing(saved, openNow);
+    if (!gone.length) return;
+    console.log('');
+    console.log(`🔵 ${gone.length} tab(s) open before the last shutdown are not back:`);
+    for (const t of gone.slice(0, 12)) console.log(`   ${t.title ? `${t.title}  ` : ''}${t.url}`);
+    if (gone.length > 12) console.log(`   … and ${gone.length - 12} more`);
+    console.log('   Reopen the ones you still want:  wb go <url>');
+  } catch { /* a convenience; never let it fail a launch */ }
+}
+
 function cdpVersion(timeoutMs = 1500) {
   return new Promise((resolve) => {
     const req = http.get(
@@ -229,6 +317,35 @@ if (require.main !== module) return;
   const existing = await cdpVersion();
   if (existing && existing.Browser) {
     console.log(`ALREADY_UP  ${existing.Browser}  cdp=http://127.0.0.1:${CDP_PORT}`);
+    // 🔴 "Already up" is not "already correct". Chrome reads its command line only at
+    //    startup, so a browser that was running before a flag was added keeps the old
+    //    behaviour — and this line used to be the whole answer. Reported 2026-10-02 by
+    //    someone told to run `node launch.js` to pick up a new flag: it printed ALREADY_UP
+    //    and exited, the flag never applied, and the only reason they noticed was that they
+    //    went looking. "It said already up" reads as success.
+    // 🔵 Measure the capability rather than parse a command line: the running browser either
+    //    allows audio without a gesture or it does not, and that is the thing people care
+    //    about. Never fatal — a probe that cannot run must not stop anyone from working.
+    const gap = await autoplayGap();
+    if (gap) {
+      console.log('');
+      console.log('🔴 This Chrome was started WITHOUT --autoplay-policy=no-user-gesture-required,');
+      console.log('   so pages that speak (a voice UI, an alert chime) stay silent after every');
+      console.log('   reload until a human clicks. Chrome only reads flags at startup, so this');
+      console.log('   command cannot fix it — the running browser has to be stopped first:');
+      console.log('');
+      console.log('     wb down            # stops the engine (not Chrome)');
+      console.log('     # then close Chrome yourself, or:');
+      console.log(`     curl -s http://127.0.0.1:${CDP_PORT}/json/version   # find webSocketDebuggerUrl`);
+      console.log('     # …and send {"id":1,"method":"Browser.close"} on that socket');
+      console.log('     node launch.js     # now the flag applies');
+      console.log('');
+      console.log('   🔴 Browser.close shuts the WHOLE browser, including tabs other agents or');
+      console.log('      the user opened. Check `wb tabs` first; note what is open, as reopening');
+      console.log('      is not automatic.');
+      console.log('   Verify after: node scripts/check-autoplay.js');
+    }
+    await reportMissingTabs();
     return;
   }
 
@@ -469,4 +586,6 @@ if (require.main !== module) return;
 
   console.log(`BROWSER_UP  ${v.Browser}  cdp=http://127.0.0.1:${CDP_PORT}`);
   console.log(`profile     ${udd}  (${PROFILE})`);
+
+  await reportMissingTabs();
 })();

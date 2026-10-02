@@ -460,6 +460,20 @@ case "$cmd" in
     # 🔵 Don't judge with tasklist/netstat — under mirrored WSL all three fail to see
     #    Chrome while CDP responds fine (measured 2026-08-23).
     _cdp_up    && echo "✅ Chrome (CDP $CDP)" || echo "❌ Chrome — ./wb up"
+    # 🔴 A Chrome that is up but was started without the autoplay flag makes every page
+    #    that speaks go silent after each reload — and it does so QUIETLY: the page
+    #    renders, nothing errors, the sound is simply absent. Reported 2026-10-02, where
+    #    the only thing noticing was a separate project's own watchdog. `status` is where
+    #    someone looks when "it worked yesterday", so say it here.
+    # 🔵 Chrome reads flags only at startup, so this can drift back on any restart that
+    #    bypasses launch.js — which is exactly why it is checked rather than assumed.
+    if _cdp_up && [ -f "$DIR/scripts/check-autoplay.js" ]; then
+      if ! node "$DIR/scripts/check-autoplay.js" "$CDP" >/dev/null 2>&1; then
+        echo "⚠️  Chrome was started WITHOUT --autoplay-policy=no-user-gesture-required"
+        echo "    → pages that speak stay silent after a reload until someone clicks."
+        echo "      Restart Chrome through launch.js to fix; details: node scripts/check-autoplay.js"
+      fi
+    fi
     # 🔴 Say which build is answering, not just that something is. Reported 2026-08-31:
     #    a fix was released and pulled, and an engine started before the pull kept the
     #    port, so old code answered every request. Working that out took comparing

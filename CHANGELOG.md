@@ -5,6 +5,55 @@ has the detail.
 
 ---
 
+## 0.29.0 — 2026-10-02
+
+Three follow-ups from a user applying 0.28.0 on another machine. Each is a place where the
+tool was right about the facts and silent about what mattered.
+
+### `launch.js` no longer says only "ALREADY_UP"
+
+Told to run `node launch.js` to pick up the new autoplay flag, it printed `ALREADY_UP` and
+exited — Chrome reads flags only at startup, so nothing applied. **"It said already up" reads
+as success**, and the only reason the user noticed was that they went looking. They had to
+stop Chrome by hand first.
+
+`ALREADY_UP` now measures whether the running browser actually allows audio, and when it does
+not, says so plus how to restart and how to verify. It still never stops Chrome itself —
+that closes tabs belonging to other people.
+
+### Tabs that do not come back are now named
+
+Restarting Chrome is sometimes the only way to apply a flag, and the tabs do not return on
+their own. The same restart left **1 of 2** tabs, and the second survived only because the
+user had written its URL down beforehand.
+
+The engine now snapshots open tabs (throttled, piggybacked on `/health`, best-effort), and
+`launch.js` prints any that did **not** come back — on both the fresh-launch and `ALREADY_UP`
+paths, because staying quiet about a lost tab is the same silence.
+
+```
+🔵 1 tab(s) open before the last shutdown are not back:
+   STARIAN CANVAS  https://…/?board=wgolf-primary
+   Reopen the ones you still want:  wb go <url>
+```
+
+🔵 It prints rather than reopens: a tab closed deliberately before a restart should stay
+closed, and only a person knows which those were. Blank tabs, `chrome://`, devtools and our
+own CDP endpoints are skipped; URLs are deduplicated and never truncated.
+
+### `wb status` reports a Chrome started without the flag
+
+A Chrome missing `--autoplay-policy` makes every page that speaks go silent after a reload,
+**quietly** — the page renders, nothing errors, the sound is simply absent. The flag can drift
+back on any restart that bypasses `launch.js`. `wb status` is where people look when "it
+worked yesterday", so the check belongs there.
+
+🔵 Credit where due: the three problems above were all found by someone else applying the
+previous release and reporting precisely what they hit, including the parts that were their
+own doing. None of them would have surfaced from this side.
+
+---
+
 ## 0.28.0 — 2026-10-02
 
 ### A page can speak again after a reload
