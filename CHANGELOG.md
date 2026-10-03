@@ -5,6 +5,39 @@ has the detail.
 
 ---
 
+## 0.31.2 — 2026-10-03
+
+### A dead tab is not a dead socket, and restarting cannot fix one
+
+`wb go https://x.com/home` timed out at 90s. The engine said the browser socket was half-dead,
+reconnected (no effect), then advised restarting the engine, then restarting Chrome. **None of
+those remove a dead tab**, which is what this actually was.
+
+Measured: that x.com tab had been open for hours. Its websocket connected in **27 ms** and
+`Runtime.evaluate 1` never returned — while `/json/version` and every other tab answered in
+single-digit milliseconds. Chrome was healthy. The browser socket was healthy. One renderer was
+gone. Closing that tab made x.com open instantly.
+
+So on a read timeout the engine now asks **this tab** before blaming the connection:
+
+```
+"readError": "read: this tab's renderer had stopped responding — Chrome and the engine are
+ both fine (Chrome answered raw CDP instantly; so did the other tabs). Closed the dead tab.
+ Run the command again and it will open a fresh one.
+ 🔴 Do NOT restart the engine or Chrome for this — neither one would have removed the dead tab."
+```
+
+The probe is a fresh websocket to that one target plus a trivial `evaluate`, bounded at 2.5s, and
+it only runs on a path that has already spent 30s. Unmeasurable returns `null`, not `false` — a tab
+we could not measure is never closed.
+
+Three agents spent hours on this, and one filed a request to switch the engine to raw CDP, which
+would not have helped either: raw CDP failed on that tab exactly the same way. The automatic
+dead-tab cleanup shipped in 0.13.9 lived only in `rawcdp.js`, so it ran **only when the engine was
+already on the raw-CDP fallback** — never on the healthy playwright path where this happened.
+
+---
+
 ## 0.31.1 — 2026-10-02
 
 ### The tab list no longer needs the attach that may be broken
@@ -43,6 +76,12 @@ instead of inferring "the browser is broken" from a 502 on two reads out of five
 query string left a path with `null` glued to the front. A reader cannot tell that from a broken
 list. `safeUrl` now builds from the protocol when there is no real origin, and `test/safeurl.test.js`
 pins both halves — the query string must still never survive, because this string is logged.
+
+### `scripts/test.sh` says whether Chrome is running
+
+Two tests need a live browser. Reporting their `ECONNREFUSED` the same way it reports a bug trains
+people to ignore red, so the runner states Chrome's status before running, and on failure with
+Chrome down it says to check whether every failure is just that.
 
 ---
 

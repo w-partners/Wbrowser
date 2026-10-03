@@ -158,6 +158,38 @@ async function rawCdpAlive() {
   } catch { return false; }
 }
 
+// 🔴 Is THIS PAGE's renderer answering, as opposed to Chrome as a whole? These are different
+//    questions and conflating them sent people to restart things that were fine.
+//    Measured 2026-10-03: x.com had been open for hours; its websocket connected in 27ms but
+//    `Runtime.evaluate 1` never returned, while every other tab and /json/version answered
+//    instantly. Chrome was healthy, the browser socket was healthy, and only that one renderer
+//    was gone — so "half-dead socket" was the wrong diagnosis, and reconnecting, restarting the
+//    engine and restarting Chrome would all have left the dead tab exactly where it was. The
+//    only fix is closing that tab.
+// 🔵 Cheap and bounded: a fresh websocket to that target plus a trivial evaluate. A live
+//    renderer answers in a few ms, so 2.5s is generous; a dead one costs us 2.5s once.
+async function pageRendererAlive(page, timeoutMs = 2500) {
+  let url;
+  try { url = page.url(); } catch { return null; }      // null = could not even ask
+  if (!url) return null;
+  let client = null;
+  try {
+    const { RawCDP } = require('./rawcdp');
+    const targets = await require('./rawcdp').getJSON(`${CDP}/json/list`);
+    const t = (Array.isArray(targets) ? targets : [])
+      .find((x) => x.type === 'page' && x.url === url);
+    if (!t || !t.webSocketDebuggerUrl) return null;
+    client = new RawCDP(CDP);
+    await client._connect(t.webSocketDebuggerUrl);
+    await client.send('Runtime.evaluate', { expression: '1', returnByValue: true }, timeoutMs);
+    return true;
+  } catch {
+    return false;            // socket opened or not, the renderer did not answer
+  } finally {
+    try { if (client) client.close(); } catch { /* nothing to clean up */ }
+  }
+}
+
 // 🔴 Reported 2026-09-06 (idifference): over a network boundary the browser websocket goes
 //    half-dead AFTER a clean connect — the first goto works, then every later command times
 //    out. connect()'s reconnect only fires when connectOverCDP ITSELF times out; here it
@@ -1844,13 +1876,45 @@ async function act(cmd) {
       //    CDP endpoint answers instantly while page.evaluate hangs, Chrome is fine and
       //    the fault is the connection. Restarting Chrome is the only thing that clears it.
       const cdpFast = await rawCdpAlive();
+      let rendererWasDead = false;
+      // 🔴 Ask THIS TAB before blaming the connection. If Chrome answers but this page's
+      //    renderer does not, nothing about the engine or the socket is wrong and no restart
+      //    helps — the tab itself is gone. Closing it is the whole fix, and the caller can
+      //    simply run the command again (a new tab opens). Measured 2026-10-03: x.com sat dead
+      //    for hours while the engine told three people to restart things that were fine.
+      //    🔵 This check only runs on a path that has ALREADY spent 30s, so its 2.5s is cheap.
+      const tabAlive = cdpFast ? await pageRendererAlive(page) : null;
+      if (cdpFast && tabAlive === false) {
+        let closed = false;
+        try { await page.close({ runBeforeUnload: false }); closed = true; } catch { /* already gone */ }
+        // 🔵 Drop it from the agent's tab map too, or the next command reuses the corpse.
+        try {
+          for (const [k, p] of tabs.entries()) if (p === page) tabs.delete(k);
+        } catch { /* map shape changed; the close above is what matters */ }
+        result.readError = closed
+          ? 'read: this tab\'s renderer had stopped responding — Chrome and the engine are both '
+            + 'fine (Chrome answered raw CDP instantly; so did the other tabs). Closed the dead '
+            + 'tab. Run the command again and it will open a fresh one. '
+            + '🔴 Do NOT restart the engine or Chrome for this — neither one would have removed '
+            + 'the dead tab.'
+          : 'read: this tab\'s renderer had stopped responding and it could not be closed. '
+            + 'Chrome and the engine are fine. Close that tab by hand, or run the command with a '
+            + 'different --tab name to get a fresh one.';
+        // 🔵 Fall through on purpose. `result` was assembled above (tab/agent/account/done), but
+        //    console/errors/network collection comes AFTER this point — returning here would
+        //    silently drop whatever the caller also asked for. Set the message and continue;
+        //    the branches below are all guarded on `summary`, which is TIMED_OUT here.
+        rendererWasDead = true;
+      }
       // 🔵 If raw CDP is instant while the read hung, the browser socket is half-dead — try to
       //    revive it now (one-shot, engine-wide) so the caller's NEXT request lands on a fresh
       //    socket without anyone restarting the engine by hand. If the revive establishes a new
       //    socket, say so; if it could not (world buildup, or already retried), fall back to the
       //    restart guidance. (idifference 2026-09-06.)
-      const revived = cdpFast && await reviveIfHalfDead(true);
-      result.readError = revived
+      // 🔴 Only try the socket story when the tab itself was alive. Reviving a healthy socket
+      //    because a dead TAB timed out is what made the real cause invisible.
+      const revived = !rendererWasDead && cdpFast && await reviveIfHalfDead(true);
+      if (!rendererWasDead) result.readError = revived
         ? 'read: timed out after 30s on a half-dead browser socket (Chrome answered raw CDP '
           + 'instantly). Reconnected automatically on a fresh socket — just run the command '
           + 'again and it should go through. If it still times out, the fault is not the socket: '

@@ -643,3 +643,18 @@ browser. `POST /api/starian/mcp` exposes the same table as MCP tools.
 works. Restarting the engine does not fix a playwright/Chrome version mismatch, so being told
 to restart is a wrong instruction — and a wrong instruction is worse than silence, because it
 gets followed.
+
+### A read timed out but Chrome is fine — check the TAB, not the connection
+
+🔴 `read: this tab's renderer had stopped responding ... Closed the dead tab` means exactly that:
+Chrome is healthy, the engine is healthy, and one tab's renderer died. **Run the command again** —
+a fresh tab opens. Do **not** restart the engine or Chrome; neither removes a dead tab.
+
+Measured 2026-10-03: an x.com tab left open for hours had a websocket that connected in 27 ms while
+`Runtime.evaluate 1` never returned; `/json/version` and every other tab answered in single-digit
+ms. Switching the engine to raw CDP would not have helped — raw CDP failed on that tab the same
+way. Closing it made x.com open instantly.
+
+🔵 Before 0.31.2 the engine called this a half-dead socket and advised a restart, so if you are on
+an older build and a page times out while everything else is fast, close that tab by hand or use a
+different `--tab` name.
