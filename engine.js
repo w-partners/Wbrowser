@@ -900,8 +900,16 @@ function coordOf(page) {
   catch { return `${BROWSER_NUM}-?`; }
 }
 
-async function stampTitle(page, agent, tabName, coord) {
-  const install = ({ tag, tab, mark }) => {
+// 🔴 ONE source for the title stamp. It used to live inside stampTitle(), which takes a
+//    playwright `page` — so the raw-CDP fallback, which has no page object, opened tabs with no
+//    stamp at all. Measured 2026-10-03 (influencer-whitegun): on the fallback, /act opened tabs
+//    that `wb close --agent <name>` then could not find — "no open tabs", 0 closed, while the
+//    tabs were right there. The agent could not clean up after itself and could not tell its own
+//    tabs from anyone else's.
+//    🔵 Same failure shape as the dead-tab cleanup that lived only in rawcdp.js (L-20261003-01):
+//       behaviour that differs by code path, where the path nobody tests is the broken one.
+//       So this is a module-level function both lanes call, not two copies.
+const TITLE_INSTALL = ({ tag, tab, mark }) => {
     const KEY = '__wbrowserTitleGuard';
     window.__wbrowserAgent = tag;
     // 🔵 The tab key lives in the page, not only in the engine's memory. The engine's map
@@ -932,8 +940,10 @@ async function stampTitle(page, agent, tabName, coord) {
     window.__wbrowserTitleObs.observe(head, {
       subtree: true, childList: true, characterData: true,
     });
-  };
+};
 
+async function stampTitle(page, agent, tabName, coord) {
+  const install = TITLE_INSTALL;
   const arg = { tag: agent, tab: tabName, mark: coord || `${BROWSER_NUM}-?` };
   try {
     // Apply immediately to the current page
@@ -1084,6 +1094,12 @@ async function actViaRawCDP(cmd, tab) {
         await raw.createTab(cmd.goto || 'about:blank', { newWindow: !!cmd.newwindow });
         done.push(cmd.newwindow ? 'newwindow' : 'newtab');
         openedTab = true;
+        // 🔴 Stamp it. Without this the fallback opens tabs that nothing can identify later:
+        //    `wb close --agent <name>` matches on the title tag, so it reported "no open tabs"
+        //    and closed 0 while the agent's own tabs sat open (measured 2026-10-03). An agent
+        //    that cannot find its own tabs cannot clean up, and cannot tell them from a human's.
+        //    🔵 Same script as the playwright lane (TITLE_INSTALL) — one source, so the two
+        //       lanes cannot drift into stamping different things.
       } else {
         throw e;   // no tab and nothing opens one — the honest "run go first" error stands
       }
@@ -1107,6 +1123,32 @@ async function actViaRawCDP(cmd, tab) {
           .catch(() => -1);
         if (len > 0 && len === last) { stable += 1; if (stable >= 2) break; } else { stable = 0; }
         last = len;
+      }
+    }
+    // 🔴 Stamp AFTER the page has settled, and VERIFY it took.
+    //    First attempt stamped right after createTab and reported `stamped` — but the tab is
+    //    about:blank or mid-navigation at that moment, and the navigation replaces the document,
+    //    taking the title with it. Measured 2026-10-03: `done:["newtab","stamped"]` while the
+    //    title was a bare "Example Domain". 🔴 That is the silent-failure shape this very change
+    //    was fixing: reporting work that did not land. So read the title back and only claim it
+    //    when it is actually there.
+    //    🔵 Why it matters: `wb close --agent <name>` matches on this tag. Without it an agent
+    //       cannot find — or clean up — its own tabs (influencer-whitegun, 2026-10-03: five tabs
+    //       left open because none could be told apart from a human's).
+    if (openedTab && cmd.agent) {
+      try {
+        await raw.evaluate(
+          `(${TITLE_INSTALL.toString()})(${JSON.stringify({
+            tag: cmd.agent, tab: cmd.tab || 'main', mark: `${BROWSER_NUM}-?`,
+          })})`,
+          false,
+        );
+        const got = await raw.evaluate('document.title').catch(() => '');
+        if (typeof got === 'string' && got.includes(cmd.agent)) done.push('stamped');
+        else result.stampWarning = 'could not tag this tab with the agent name — '
+          + `"wb close --agent ${cmd.agent}" will not find it. Close it by URL or by hand.`;
+      } catch (e) {
+        result.stampWarning = `tagging this tab failed: ${String(e.message || e).split('\n')[0]}`;
       }
     }
     if (cmd.click) { await raw.click(cmd.click); done.push(`click ${cmd.click}`); }

@@ -5,6 +5,35 @@ has the detail.
 
 ---
 
+## 0.31.3 — 2026-10-03
+
+### On the raw-CDP fallback, an agent can find its own tabs again
+
+`wb close --agent <name>` matches on the `[1-2] <agent>` title tag. The fallback's `createTab`
+never applied one, so tabs an agent opened on that path were invisible to it: `wb close` answered
+*"no open tabs"* and closed 0 while the tabs sat open on screen. Reported 2026-10-03 — an agent
+left five tabs behind rather than risk closing a person's.
+
+The tag script now lives at module level and **both lanes use that one source**, so they cannot
+drift into tagging different things. Same failure shape as 0.31.2's dead-tab cleanup, which lived
+only in `rawcdp.js` and therefore ran only when the engine was *already* degraded: behaviour that
+differs by code path, where the untested path is the broken one.
+
+Two details that were wrong on the first attempt and are now pinned by tests:
+
+- **It stamps after the page settles.** Stamping right after `createTab` reported `stamped` while
+  the title stayed bare — the tab is `about:blank` or mid-navigation then, and the navigation
+  replaces the document, taking the title with it.
+- **It reads the title back before claiming success.** The first version pushed `stamped`
+  unconditionally and was wrong on the very first run. When the tag does not take you now get
+  `stampWarning` saying so, and what it costs: `wb close --agent <name>` will not find that tab.
+
+Verified end to end on the fallback: `done:["newtab","stamped"]`, title
+`[1-?] stamp-probe2 Example Domain`, then `wb close --agent stamp-probe2` → **Closed 1 tabs**,
+leaving an untagged tab on the same URL untouched.
+
+---
+
 ## 0.31.2 — 2026-10-03
 
 ### A dead tab is not a dead socket, and restarting cannot fix one
