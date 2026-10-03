@@ -55,6 +55,16 @@ function closeTarget(cdpBase, id) {
 //   match given  → EXACTLY this agent's stamped tabs. Never widened to other agents' tabs;
 //                  if none are stamped for this agent, throw (attach refuses to borrow one).
 //   no match     → every page (an unnamed caller has no identity to protect).
+// 🔴 Ownership must not live only in the title. The title belongs to the PAGE: an SPA rewrites
+//    it whenever it likes (X does, for the unread count), and our MutationObserver reapplies the
+//    tag — but anything that replaces the document takes the observer with it, and from then on
+//    the tab is unidentifiable. Measured 2026-10-03 (influencer-whitegun): a tab read
+//    "[1-?] influencer-whitegun (1) WhiteGun on X…" right after opening and plain
+//    "(1) WhiteGun on X…" minutes later, after which `wb close --agent <name>` found nothing and
+//    five tabs were left open because none could be told from a person's.
+// 🔵 So the title is a HINT, not the record. `verifyOwner` lets the caller confirm ownership by
+//    asking the page itself (window.__wbrowserAgent), which survives title rewrites. Callers that
+//    cannot evaluate still get the old behaviour.
 function chooseCandidates(pages, match) {
   if (!match) return pages;
   const stamped = pages.filter((t) => (t.title || '').includes(match));
@@ -111,7 +121,22 @@ class RawCDP {
     const list = await getJSON(`${this.cdpBase}/json/list`);
     const pages = (Array.isArray(list) ? list : []).filter((t) => t.type === 'page');
     if (!pages.length) throw new Error('rawcdp: no page target to attach to');
-    const ordered = chooseCandidates(pages, match);   // pure, unit-tested: honours identity
+    // 🔴 Try the title first (one HTTP call, already in hand), but do not let a rewritten title
+    //    mean "this agent has no tabs". The page owns its title and an SPA rewrites it; the
+    //    window marker survives that. Measured 2026-10-03: an agent's own x.com tab became
+    //    unreachable to it — the fallback refused to attach and advised restarts that could not
+    //    help, because the tag it looks for was gone while the tab was right there.
+    // 🔵 Ask the pages only when the cheap path found nothing, and claim only exact answers.
+    let ordered;
+    try {
+      ordered = chooseCandidates(pages, match);
+    } catch (e) {
+      if (!match) throw e;
+      const owned = await verifyOwner(this.cdpBase, pages, match);
+      if (!owned.length) throw e;        // genuinely none of ours — the original message stands
+      this.identifiedBy = 'window-marker';
+      ordered = owned;
+    }
     let lastErr = null;
     const dead = [];
     for (const t of ordered) {
@@ -318,4 +343,28 @@ class RawCDP {
 // 🔵 getJSON is exported so /health can ask Chrome directly whether it is there, without
 //    going through playwright — the one probe that stays honest when the attach is what
 //    is broken (measured 2026-10-02: /json/list answered in 13ms while attach timed out).
-module.exports = { RawCDP, chooseCandidates, closeTarget, getJSON };
+// Ask each target whether it belongs to `agent`, by reading the marker the stamp left on the
+// window. 🔵 This is the durable half of the record: a page can rewrite its title but it does not
+// clear our window property unless the document is replaced.
+// 🔴 Returns ONLY targets that answered yes. A target that did not answer is left out rather than
+//    assumed — closing a tab we could not identify is the failure this whole change avoids.
+async function verifyOwner(cdpBase, pages, agent, timeoutMs = 2500) {
+  const out = [];
+  for (const t of (pages || [])) {
+    if (!t || t.type !== 'page' || !t.webSocketDebuggerUrl) continue;
+    const c = new RawCDP(cdpBase);
+    try {
+      await c._connect(t.webSocketDebuggerUrl);
+      const r = await c.send('Runtime.evaluate', {
+        expression: 'window.__wbrowserAgent || ""', returnByValue: true,
+      }, timeoutMs);
+      const who = r && r.result ? r.result.value : '';
+      if (who && who === agent) out.push(t);
+    } catch { /* unreachable or dead renderer — not ours to claim */ } finally {
+      try { c.close(); } catch { /* already gone */ }
+    }
+  }
+  return out;
+}
+
+module.exports = { RawCDP, chooseCandidates, closeTarget, getJSON, verifyOwner };

@@ -760,6 +760,62 @@ except Exception:
 #    anything once ids were added to the label — measured 2026-09-01.
 _pat = re.compile(r"^\[[^\]]*\]\s+" + re.escape(me) + r"(\s|$)")
 mine = [t for t in tabs if me and _pat.match(t.get("title") or "")]
+
+# 🔴 The title is not the record of ownership — the PAGE owns the title. An SPA rewrites it
+#    whenever it likes (X does, for the unread count), and once anything replaces the document
+#    our observer is gone and the tag never comes back. Measured 2026-10-03: a tab read
+#    "[1-?] influencer-whitegun (1) WhiteGun on X…" on open and plain "(1) WhiteGun on X…"
+#    minutes later, after which this command found nothing and five tabs were left behind
+#    because none could be told from a person's.
+# 🔵 So when the title match finds nothing, ask the pages themselves. window.__wbrowserAgent
+#    is set by the same stamp and survives title rewrites. Only tabs that ANSWER with our name
+#    are claimed — one that does not answer is left alone, because closing a tab we could not
+#    identify is the accident this exists to prevent.
+if not mine and me:
+    import contextlib, socket, struct, base64, os, hashlib
+    def _ask(ws_url, timeout=2.5):
+        # Minimal CDP call over a raw websocket: no dependency, no engine round trip (the
+        # engine may be the thing that is down).
+        m = re.match(r"ws://([^:/]+):(\d+)(/.*)", ws_url or "")
+        if not m: return None
+        host, port, path = m.group(1), int(m.group(2)), m.group(3)
+        key = base64.b64encode(os.urandom(16)).decode()
+        try:
+            sk = socket.create_connection((host, port), timeout=timeout); sk.settimeout(timeout)
+            sk.sendall((f"GET {path} HTTP/1.1\r\nHost: {host}:{port}\r\nUpgrade: websocket\r\n"
+                        f"Connection: Upgrade\r\nSec-WebSocket-Key: {key}\r\n"
+                        f"Sec-WebSocket-Version: 13\r\n\r\n").encode())
+            buf = b""
+            while b"\r\n\r\n" not in buf: 
+                c = sk.recv(4096)
+                if not c: return None
+                buf += c
+            msg = json.dumps({"id": 1, "method": "Runtime.evaluate",
+                              "params": {"expression": 'window.__wbrowserAgent || ""',
+                                         "returnByValue": True}}).encode()
+            mask = os.urandom(4)
+            ln = len(msg)
+            hdr = b"\x81" + (bytes([0x80 | ln]) if ln < 126 else b"\xfe" + struct.pack(">H", ln))
+            sk.sendall(hdr + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(msg)))
+            data = b""
+            for _ in range(40):
+                chunk = sk.recv(65536)
+                if not chunk: break
+                data += chunk
+                if b'"result"' in data: break
+            sk.close()
+            t = data[data.find(b"{"):]
+            for cut in range(len(t), 0, -1):
+                with contextlib.suppress(Exception):
+                    return json.loads(t[:cut])["result"]["result"].get("value")
+            return None
+        except Exception:
+            return None
+    mine = [t for t in tabs if _ask(t.get("webSocketDebuggerUrl")) == me]
+    if mine:
+        print(f"· title tags were gone (the page rewrote them); identified {len(mine)} "
+              f"tab(s) by asking the page instead")
+
 if not mine:
     print(f"· '{me}' has no open tabs"); sys.exit(0)
 # If every tab is mine, leave one behind — otherwise the browser dies.

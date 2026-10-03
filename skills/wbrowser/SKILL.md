@@ -658,3 +658,15 @@ way. Closing it made x.com open instantly.
 🔵 Before 0.31.2 the engine called this a half-dead socket and advised a restart, so if you are on
 an older build and a page times out while everything else is fast, close that tab by hand or use a
 different `--tab` name.
+
+### `wb close --agent` when the page rewrote its title
+
+The title tag is **a hint, not the record.** The page owns its title: an SPA rewrites it whenever it
+likes (X does, for the unread count), and once anything replaces the document the tag is gone for
+good. From 0.32.0 `wb close --agent <name>` handles that — it scans titles first, and if nothing
+matches it asks each page directly via `window.__wbrowserAgent`, printing *"title tags were gone
+(the page rewrote them)"* when it had to. The raw-CDP lane does the same before refusing to attach.
+
+🔴 **Only exact answers are claimed.** A page that does not answer is left alone — a tab nobody can
+identify is never closed. If you are on an older build and `wb close --agent` says "no open tabs"
+while your tabs are on screen, close them by URL instead.

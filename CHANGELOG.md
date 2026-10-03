@@ -5,6 +5,40 @@ has the detail.
 
 ---
 
+## 0.32.0 — 2026-10-03
+
+### A tab's owner is no longer recorded only in a place the page can erase
+
+The title tag (`[1-2] my-agent …`) is how `wb close --agent` and the raw-CDP lane find an agent's
+own tabs. But **the title belongs to the page.** An SPA rewrites it whenever it likes — X does, for
+the unread count — and a MutationObserver puts the tag back. Anything that replaces the document
+takes that observer with it, and from then on the tab cannot be identified at all.
+
+Reported 2026-10-03: a tab read `[1-?] influencer-whitegun (1) WhiteGun on X…` right after opening
+and plain `(1) WhiteGun on X…` minutes later. `wb close --agent influencer-whitegun` then answered
+*"no open tabs"*, and five tabs were left open because none could be told apart from a person's.
+The raw-CDP lane refused to attach for the same reason, advising restarts that could not help.
+
+The stamp has always also set `window.__wbrowserAgent`, which survives title rewrites. That is now
+used as a second route:
+
+- **`wb close --agent <name>`** scans titles first (one HTTP call for every tab at once); if that
+  finds nothing it asks each page directly, and says so — *"title tags were gone (the page rewrote
+  them); identified 1 tab(s) by asking the page instead"*.
+- **The raw-CDP lane** does the same before refusing to attach.
+- **Only exact answers are claimed.** A page that does not answer is left alone — closing a tab we
+  could not identify is the accident this exists to prevent, so silence is never consent.
+
+Measured end to end: with the title tag stripped and the observer disconnected (the reported state),
+`wb read` reached the tab and `wb close --agent` closed exactly it, leaving an untagged tab on the
+same URL untouched.
+
+🔵 A 3-minute watch found no natural decay — tag and observer were alive at every 20s sample. The
+loss is event-driven, not time-driven, so this fix deliberately does not depend on identifying the
+event: whenever the title tag is missing, ask the page.
+
+---
+
 ## 0.31.3 — 2026-10-03
 
 ### On the raw-CDP fallback, an agent can find its own tabs again
