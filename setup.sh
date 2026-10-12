@@ -322,7 +322,7 @@ if ! ( cd "$DEST" && node launch.js ); then
 fi
 
 say "Starting the control engine"
-( cd "$DEST" && nohup node engine.js > "${XDG_STATE_HOME:-$HOME/.local/state}/wbrowser/engine.log" 2>&1 & ) 2>/dev/null
+( cd "$DEST" && nohup node engine.js >> "${XDG_STATE_HOME:-$HOME/.local/state}/wbrowser/engine.log" 2>&1 & ) 2>/dev/null
 for _ in $(seq 1 25); do
   curl -s --max-time 2 http://127.0.0.1:7981/health 2>/dev/null | grep -q '"ok"' && break
   sleep 0.4

@@ -232,7 +232,11 @@ async function runTool(name, a) {
     case 'browser_screenshot': {
       const r = await act({ ...common, shot: true, fullPage: !!a.fullPage });
       if (r.error) return textOut(r);
-      if (!r.screenshot_b64) return textOut({ error: 'the screenshot is empty' });
+      // 🔴 Pass the engine's reason through. It reports why a capture failed (shotError) and
+      //    dropping it left only "empty" — the caller then had nothing to go on.
+      if (!r.screenshot_b64) {
+        return textOut({ error: `no screenshot: ${r.shotError || 'the engine returned no image and no reason'}` });
+      }
       return { content: [{ type: 'image', data: r.screenshot_b64, mimeType: 'image/png' }] };
     }
     case 'browser_tabs':

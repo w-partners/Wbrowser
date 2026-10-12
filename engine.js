@@ -708,7 +708,7 @@ async function getTab(name, accountHint, strict, agent, mustExist = false, _revi
   // 🔵 The session is shared, so a new tab is already logged in — that was the real point
   //    of inheriting, and opening a tab keeps it. What is lost is only that the agent
   //    starts on about:blank instead of a page, which every caller follows with a goto.
-  const page = await targetCtx.newPage();
+  const page = recordOpened(await targetCtx.newPage());
   tabs.set(key, page);
   wireLogging(page);       // start recording console / errors / failed requests from here on
   return page;
@@ -722,6 +722,19 @@ async function getTab(name, accountHint, strict, agent, mustExist = false, _revi
 // 🔴 A tab is "an agent's" ONLY if it carries the __wbrowserMark stamp. A tab the human
 //    opened, or a login tab, carries no mark and is never counted and never closed.
 const MAX_AGENT_TABS = 8;
+// 🔴 The engine's own record of the tabs it opened. Asking the page ("do you carry our
+//    mark?") is the only way to recognise a tab opened before this engine started, but it is
+//    a question a busy page cannot answer: with a 600ms budget and the machine at load 26-47,
+//    every page timed out, every page was counted as "not ours", and the cap closed nothing.
+//    Reported 2026-10-12 (zalman): 107 agent tabs open against a cap of 8, until playwright's
+//    attach and then raw CDP both stopped answering. A tab this engine created is ours for
+//    certain — no question needed — so it is counted whether or not it answers.
+const openedPages = new Set();
+function recordOpened(page) {
+  openedPages.add(page);
+  page.once('close', () => { openedPages.delete(page); });
+  return page;
+}
 async function reapAgentTabs(ctx) {
   const marked = [];
   for (const p of ctx.pages()) {
@@ -733,8 +746,12 @@ async function reapAgentTabs(ctx) {
         new Promise((res) => { setTimeout(() => res(null), 600); }),
       ]);
     } catch { /* chrome:// / cross-origin — cannot ask, so treat as not-ours */ }
-    if (!info || !info.mark) continue;           // 🔴 no mark → not an agent tab → leave it
-    marked.push({ page: p, id: tabIds.get(p) || 0, blank: (info.url || '') === 'about:blank' });
+    const ours = openedPages.has(p);
+    // 🔴 no mark and not opened by us → not an agent tab → leave it
+    if (!(info && info.mark) && !ours) continue;
+    // A page that did not answer is not known to be blank, so it is only ever capped, never
+    // closed as dead.
+    marked.push({ page: p, id: tabIds.get(p) || 0, blank: !!info && (info.url || '') === 'about:blank' });
   }
   // rule 1: dead (about:blank) agent tabs
   for (const t of marked.filter((t) => t.blank)) {
@@ -1083,6 +1100,14 @@ const BUILD = (() => {
 // mid-task. Anything it cannot do (a zero-size click target, newtab) fails loudly.
 // eslint-disable-next-line global-require
 const { RawCDP } = require('./rawcdp');
+// 🔴 The raw-CDP lane opens tabs too (createTab), and it had no cap at all: every navigating
+//    command that could not attach to one of the agent's tabs opened another. Under load an
+//    existing tab often cannot be attached to in time, so the lane that runs precisely when
+//    things are slow was the one adding a tab per command (zalman 2026-10-12: 107 tabs).
+//    Keep the same exact record as the playwright lane — targets this engine created, oldest
+//    first — and hold it to the same cap before opening another.
+const rawOpened = [];   // targetIds, oldest first
+const capRawOpened = () => require('./rawcdp').capOpened(CDP, rawOpened, MAX_AGENT_TABS);
 async function actViaRawCDP(cmd, tab) {
   const result = { tab, agent: cmd.agent, via: 'rawcdp' };
   const done = [];
@@ -1099,7 +1124,8 @@ async function actViaRawCDP(cmd, tab) {
       if ((cmd.goto || cmd.newtab || cmd.newwindow)) {
         // createTab opens the URL as it makes the tab, so a following goto to the same URL is
         // redundant — mark it so we settle instead of navigating twice.
-        await raw.createTab(cmd.goto || 'about:blank', { newWindow: !!cmd.newwindow });
+        await capRawOpened();
+        rawOpened.push(await raw.createTab(cmd.goto || 'about:blank', { newWindow: !!cmd.newwindow }));
         done.push(cmd.newwindow ? 'newwindow' : 'newtab');
         openedTab = true;
         // 🔴 Stamp it. Without this the fallback opens tabs that nothing can identify later:
@@ -1479,7 +1505,7 @@ async function act(cmd) {
     //    tabs pile up (every {newtab:true} adds one, none are ever removed). The page we
     //    are about to create has no mark yet, so the reaper cannot touch it.
     await reapAgentTabs(c);
-    page = await c.newPage();
+    page = recordOpened(await c.newPage());
     // Same key shape as getTab — see the note there on why the account is not part of it.
     tabs.set(`${cmd.agent || ''}::${tab}`, page);
     done.push('newtab');

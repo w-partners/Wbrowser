@@ -367,4 +367,22 @@ async function verifyOwner(cdpBase, pages, agent, timeoutMs = 2500) {
   return out;
 }
 
-module.exports = { RawCDP, chooseCandidates, closeTarget, getJSON, verifyOwner };
+// Hold a list of tabs WE opened (targetIds, oldest first) under `max`, making room for one more.
+// 🔵 Works only from the caller's own record, never from what the pages say about themselves —
+//    a page that is too busy to answer is exactly the one this has to be able to close.
+//    Entries Chrome no longer lists (closed by hand, crashed) are dropped first, so they do not
+//    use up the cap. Mutates `opened`; returns the ids it closed.
+async function capOpened(cdpBase, opened, max) {
+  const live = new Set(((await getJSON(`${cdpBase}/json/list`)) || []).map((t) => t.id));
+  for (let i = opened.length - 1; i >= 0; i -= 1) {
+    if (!live.has(opened[i])) opened.splice(i, 1);
+  }
+  const closed = [];
+  while (opened.length >= max) {
+    const id = opened.shift();
+    if (await closeTarget(cdpBase, id)) closed.push(id);
+  }
+  return closed;
+}
+
+module.exports = { RawCDP, chooseCandidates, closeTarget, getJSON, capOpened, verifyOwner };

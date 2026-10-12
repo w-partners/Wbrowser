@@ -406,7 +406,14 @@ case "$cmd" in
     else
       WBROWSER_PORT="$ENGINE_PORT" WBROWSER_CDP_PORT="$CDP_PORT" \
         WBROWSER_BROWSER_NUM="$BROWSER_NUM" \
-        nohup node "$DIR/engine.js" > "$LOG" 2>&1 &
+        # 🔴 Append, never truncate. '>' erased the previous engine's log at every start, so
+        #    the restart that follows a failure destroyed the only record of that failure.
+        #    Reported 2026-10-12 (zalman): after a hang with 107 tabs and a restart, the log
+        #    held one line and which lane had opened the tabs could no longer be told.
+        #    Rotate once at 5MB so appending cannot grow without bound.
+        if [ -f "$LOG" ] && [ "$(wc -c < "$LOG")" -gt 5242880 ]; then mv -f "$LOG" "$LOG.1"; fi
+        echo "=== wb up $(date -u +%Y-%m-%dT%H:%M:%SZ) ===" >> "$LOG"
+        nohup node "$DIR/engine.js" >> "$LOG" 2>&1 &
       for _ in $(seq 1 25); do _engine_up && break; sleep 0.4; done
       if _engine_up; then echo "· Engine started $ENGINE"
       else
@@ -859,7 +866,7 @@ import json,sys,base64
 d=json.load(sys.stdin)
 if 'error' in d: print('❌', d['error']); sys.exit(1)
 b=d.get('screenshot_b64')
-if not b: print('❌ Screenshot is empty'); sys.exit(1)
+if not b: print('❌ No screenshot:', d.get('shotError') or 'the engine returned no image and no reason'); sys.exit(1)
 open('$OUT','wb').write(base64.b64decode(b))
 print('Saved:', '$OUT')
 "

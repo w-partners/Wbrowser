@@ -5,6 +5,30 @@ has the detail.
 
 ---
 
+## 0.32.2 — 2026-10-12
+
+### The tab cap holds on a busy machine
+Agents are held to 8 tabs; older ones are closed as new ones open. Reported: 107 agent tabs
+open at once, until the browser connection and then the raw-CDP fallback stopped answering.
+Two holes:
+- The cap only counted tabs that answered "are you one of ours?" within 600 ms. On a heavily
+  loaded machine none answered, so it counted none and closed none. Tabs the engine opened
+  itself are now counted from its own record, whether or not they answer.
+- The raw-CDP fallback opens tabs too, and had no cap at all. It now keeps the same record
+  and the same limit. Tabs you opened yourself are never counted or closed, on either path.
+
+### `wb shot` says why there is no screenshot
+When a capture failed, the engine reported the reason, and `wb shot` threw it away and
+printed only "Screenshot is empty". It now prints the reason (for example a timeout). The
+MCP `browser_screenshot` tool passes it on too.
+
+### Restarting the engine no longer erases its log
+`wb up` truncated the engine log at every start, so the restart that follows a failure
+destroyed the record of that failure. The log is now appended to, with a line marking each
+start, and rotated once at 5 MB.
+
+---
+
 ## 0.32.1 — 2026-10-12
 
 ### Profile names on Linux and macOS
