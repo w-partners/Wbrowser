@@ -491,6 +491,14 @@ function wireLogging(page) {
   });
 }
 
+// 🔵 The profile folder name is the last segment of the path chrome://version shows.
+//    That path uses \ on Windows and / on Linux and macOS — split on both. Splitting on \
+//    alone handed Linux callers the whole path where a name was expected, and an account
+//    hint naming the folder ("Default", "Profile 3") could then never match.
+function profileNameOf(p) {
+  return (p || '').split(/[\\/]/).pop() || '';
+}
+
 async function accountOf(context) {
   if (ctxAccounts.has(context)) return ctxAccounts.get(context);
   // Open chrome://version in that context and read the profile path.
@@ -535,7 +543,7 @@ async function pickContext(hint, strict) {
     const path = (await accountOf(c)) || '';
     if (path.toLowerCase().includes(wanted)) return c;
     // Also allow matching by profile folder name (Profile 3, Default)
-    const prof = path.split('\\').pop() || '';
+    const prof = profileNameOf(path);
     if (prof.toLowerCase() === wanted) return c;
   }
   if (strict) {
@@ -1863,7 +1871,7 @@ async function act(cmd) {
   let usedProfile = null;
   try {
     const p = await accountOf(page.context());
-    usedProfile = p ? (p.split('\\').pop() || p) : null;
+    usedProfile = p ? (profileNameOf(p) || p) : null;
   } catch { /* keep going even if it cannot be read */ }
 
   // 🔴 Say whose tab this was, not just which name it had. Tabs are keyed by
@@ -2100,7 +2108,7 @@ const server = http.createServer(async (req, res) => {
       const cookies = await c.cookies();
       return res.end(JSON.stringify({
         savedAt: new Date().toISOString(),
-        profile: (await accountOf(c) || '').split('\\').pop() || null,
+        profile: profileNameOf(await accountOf(c)) || null,
         cookies,
       }, null, 2));
     }
@@ -2223,7 +2231,7 @@ const server = http.createServer(async (req, res) => {
           if (root) roots.set(root, (roots.get(root) || 0) + 1);
         }
         out.push({
-          profile: path ? (path.split('\\').pop() || path) : null,
+          profile: path ? (profileNameOf(path) || path) : null,
           totalCookies: cookies.length,
           domains: [...roots.entries()].sort((a, b) => b[1] - a[1])
             .map(([d, n]) => ({ domain: d, count: n })),
@@ -2237,7 +2245,7 @@ const server = http.createServer(async (req, res) => {
       const out = [];
       for (const c of browser.contexts()) {
         const path = await accountOf(c);
-        const prof = path ? (path.split('\\').pop() || '') : null;
+        const prof = path ? profileNameOf(path) : null;
         out.push({
           profilePath: path,
           profile: prof,
@@ -2379,7 +2387,9 @@ const server = http.createServer(async (req, res) => {
 
 // 🔴 Bind to 127.0.0.1 only. This engine drives the browser the user is logged into,
 //    so leaving it open hands over every one of those sessions.
-//    If external exposure is needed, put gate.js (PIN) in front of it.
+//    If it must be reached from elsewhere, put your own authenticating proxy in front of
+//    it and keep this bind as it is. (An earlier note here pointed at a gate.js; no such
+//    file has ever shipped with this project.)
 // 🔴 Handle a failed listen — above all EADDRINUSE. Reported 2026-09-06 (idifference): an old
 //    engine still held the port, so `wb up`'s new engine hit EADDRINUSE, which with no handler
 //    became an uncaughtException and killed the NEW process — while the OLD engine kept answering

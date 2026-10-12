@@ -5,6 +5,21 @@ has the detail.
 
 ---
 
+## 0.32.1 — 2026-10-12
+
+### Profile names on Linux and macOS
+The profile folder name was cut from the `chrome://version` path on `\` only. On Linux
+and macOS that path uses `/`, so `wb windows`, `/session` and `/logins` showed the whole
+path where a name belonged, and an account hint naming the folder (`Default`,
+`Profile 3`) could never match. Both separators are handled now, in one place.
+
+### A pointer to a file that does not exist
+The note beside the engine's 127.0.0.1 bind told readers to put `gate.js` in front of
+it for outside access. No such file has ever shipped. The note now says what is
+actually needed: your own authenticating proxy in front, with the bind left as it is.
+
+---
+
 ## 0.32.0 — 2026-10-03
 
 ### A tab's owner is no longer recorded only in a place the page can erase
