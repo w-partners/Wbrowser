@@ -404,16 +404,19 @@ case "$cmd" in
         echo "· Engine already up${_running_build:+ ($_running_build)}"
       fi
     else
-      WBROWSER_PORT="$ENGINE_PORT" WBROWSER_CDP_PORT="$CDP_PORT" \
-        WBROWSER_BROWSER_NUM="$BROWSER_NUM" \
-        # 🔴 Append, never truncate. '>' erased the previous engine's log at every start, so
+      # 🔴 Append, never truncate. '>' erased the previous engine's log at every start, so
         #    the restart that follows a failure destroyed the only record of that failure.
         #    Reported 2026-10-12 (zalman): after a hang with 107 tabs and a restart, the log
         #    held one line and which lane had opened the tabs could no longer be told.
         #    Rotate once at 5MB so appending cannot grow without bound.
         if [ -f "$LOG" ] && [ "$(wc -c < "$LOG")" -gt 5242880 ]; then mv -f "$LOG" "$LOG.1"; fi
         echo "=== wb up $(date -u +%Y-%m-%dT%H:%M:%SZ) ===" >> "$LOG"
-        nohup node "$DIR/engine.js" >> "$LOG" 2>&1 &
+        # 🔴 The env assignments must sit on the SAME command as node. v0.32.2 put the lines above
+        #    between them; the assignments then became plain shell variables, node never saw them,
+        #    and every named browser's engine started on the default port 7981 and died on
+        #    EADDRINUSE (reported 2026-11-07, coupangman). Browser 1 hid it — its ports ARE the defaults.
+        WBROWSER_PORT="$ENGINE_PORT" WBROWSER_CDP_PORT="$CDP_PORT" WBROWSER_BROWSER_NUM="$BROWSER_NUM" \
+          nohup node "$DIR/engine.js" >> "$LOG" 2>&1 &
       for _ in $(seq 1 25); do _engine_up && break; sleep 0.4; done
       if _engine_up; then echo "· Engine started $ENGINE"
       else

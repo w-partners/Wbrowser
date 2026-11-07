@@ -5,6 +5,18 @@ has the detail.
 
 ---
 
+## 0.32.3 — 2026-11-07
+
+### Named browsers start on their own port again
+Since 0.32.2, `wb -b <name> up` started that browser's engine on the default port 7981
+instead of its own, where it failed because browser 1's engine already held 7981. The
+log-keeping lines added in 0.32.2 were placed between the port settings and the command
+that starts the engine, so the engine never received them. Browser 1 was unaffected —
+its ports are the defaults — which is why it went unnoticed. A test now checks that the
+engine is launched with the browser's ports.
+
+---
+
 ## 0.32.2 — 2026-10-12
 
 ### The tab cap holds on a busy machine
