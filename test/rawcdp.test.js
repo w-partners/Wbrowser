@@ -164,10 +164,19 @@ test('createTab can open a background OS window (newWindow) for --window', async
 });
 
 test('type sends the whole string, not just one key', async () => {
+  // Default (human.js): one character per Input.insertText, so the whole string must still
+  // arrive, in order — not just the first key.
   const r = stubbedRawCDP();
   await r.type('hello');
-  // Input.insertText carries the whole string in one call — the fast, faithful path.
-  const insert = r.calls.find((c) => c.method === 'Input.insertText');
-  assert.ok(insert, 'type must send Input.insertText with the text');
-  assert.strictEqual(insert.params.text, 'hello');
+  const sent = r.calls.filter((c) => c.method === 'Input.insertText').map((c) => c.params.text);
+  assert.strictEqual(sent.join(''), 'hello');
+  assert.strictEqual(sent.length, 5, 'human typing sends one character at a time');
+  // WBROWSER_HUMAN=0: the old one-shot path.
+  process.env.WBROWSER_HUMAN = '0';
+  try {
+    const r2 = stubbedRawCDP();
+    await r2.type('hello');
+    const one = r2.calls.filter((c) => c.method === 'Input.insertText');
+    assert.deepStrictEqual(one.map((c) => c.params.text), ['hello']);
+  } finally { delete process.env.WBROWSER_HUMAN; }
 });

@@ -5,6 +5,47 @@ has the detail.
 
 ---
 
+## 0.33.0 — 2026-11-10
+
+### Input that moves like a person, by default
+- **Clicks** travel a curved, eased path to a point inside the element (not its exact
+  centre) and are held briefly before release. Playwright's own actionability checks still
+  run first, so a covered or moving element is refused just as before.
+- **Typing** spaces keys 50–150ms apart at random instead of an even 25ms beat. Past 300
+  characters the spacing tightens (still uneven) so the whole text lands in about 30 seconds,
+  inside the client's request limit, and the reply says so.
+  An explicit `delay` still gives a fixed beat; `--fast` still sets the value in one go.
+- **After `go`** the pointer drifts and the page scrolls a little and back to the top, so a
+  `read` or `shot` that follows sees the same thing as before.
+- A click aims at a random point the element itself would receive; if none qualifies (a
+  wrapped link's gap, a badge over part of it) it uses the centre playwright already checked.
+- The raw-CDP fallback uses the same paths and timings.
+- `WBROWSER_HUMAN=0` turns all of this off.
+
+### Mobile sites get a phone
+A `go` to an `m.` host (e.g. `m.example.com`) presents the tab as a phone — user agent,
+client hints, a 390×844 touch viewport — before the request leaves, so the site serves its
+mobile build. Any other host turns the tab back into the desktop it is.
+`WBROWSER_MOBILE=0` turns it off. On the raw-CDP fallback the switch covers only that
+navigation's own request (the lane's CDP session closes after each command), and the
+reply says so.
+
+### Headless no longer says so
+On a headless browser, pages and servers used to see `HeadlessChrome` in the user agent.
+Every `go` now presents it as the plain Chrome it is, with exactly the client hints Chrome
+itself sends (measured identical on Linux). On other systems running headless, where those
+hints cannot be reproduced, the UA is left alone and the reply says so — no invented values.
+If the override cannot be set, the `go` still runs and the reply says `identity not set: …`.
+
+### `WBROWSER_PROXY`
+Set it when Chrome starts (`http://host:port` or `socks5://host:port`) and all traffic,
+including WebRTC, goes through that proxy. A proxy URL with a username/password is refused
+with an explanation — Chrome cannot use credentials there. If Chrome is already running with
+a different proxy, `wb up` says so instead of implying the new one applies. `wb status`
+shows the proxy Chrome was started with.
+
+---
+
 ## 0.32.3 — 2026-11-07
 
 ### Named browsers start on their own port again

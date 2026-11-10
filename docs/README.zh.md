@@ -482,9 +482,18 @@ node cron.js daemon    按计划自动运行
 | `WBROWSER_PROFILE` | `Default` | 目录内的配置文件名 |
 | `WBROWSER_CDP_PORT` | `9222` | Chrome 调试端口 |
 | `WBROWSER_PORT` | `7981` | 控制引擎端口 |
+| `WBROWSER_PROXY` | — | 所有流量经此代理：`http://host:port` 或 `socks5://host:port`（住宅代理网关、手机热点、家庭线路上的电脑）。不能带用户名/密码——Chrome 无法使用；请把 IP 加入白名单或使用本地转发。仅在 Chrome 启动时读取。 |
+| `WBROWSER_HUMAN` | 开 | `0` 关闭拟人输入（见下） |
+| `WBROWSER_MOBILE` | 开 | `0` 时 `go` 到 `m.` 站点不再把标签页变成手机 |
 | `WBROWSER_AGENT` | 自动 | 边框和标签页显示的名称 |
 | `WBROWSER_MCP_TOKEN` | — | 远程 MCP **必需** |
 | `WBROWSER_NOTES` | — | 工作日志目录（可选） |
+
+> 🔵 **默认的操作方式。** 点击会沿曲线移动到元素内部的某一点，再短暂按住松开，像手一样；
+> `type` 的按键间隔随机在 50–150ms；`go` 之后指针会稍微移动，页面略微下滚再回来。
+> `go` 到 `m.` 开头的主机（如 `m.example.com`）时，在请求发出**之前**把标签页变成手机
+> （UA、客户端提示、视口、触控）；去其他主机则恢复。headless 浏览器会去掉页面可见的 `HeadlessChrome` 标记。
+> 因此点击和输入会变慢；需要速度时用 `type --fast` 或 `WBROWSER_HUMAN=0`。
 
 ---
 

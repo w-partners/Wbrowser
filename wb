@@ -364,7 +364,11 @@ case "$cmd" in
       export WBROWSER_PROFILE_DIR="${WBROWSER_PROFILE_ROOT:-$HOME/.wbrowser}/$BROWSER_NAME"
       echo "· Browser $BROWSER_NUM '$BROWSER_NAME'  (CDP $CDP_PORT, engine $ENGINE_PORT)"
     fi
-    if _cdp_up; then echo "· Chrome already up"; else
+    if _cdp_up; then echo "· Chrome already up"
+      # 🔴 A proxy asked for now cannot reach a Chrome that is already running — launch.js's
+      #    ALREADY_UP path compares and says so, instead of this line reading as "proxied".
+      [ -n "${WBROWSER_PROXY:-}" ] && node "$DIR/launch.js" | grep -E '^(🔴 proxy|   Chrome reads the proxy|proxy )'
+    else
       # 🔴 The default is "attach to the Chrome the user is logged into", not launching a new one.
       #    Chrome locks the default profile so we can't launch it, and if we do launch one
       #    it becomes an empty window with no logins, which is useless.
@@ -470,6 +474,16 @@ case "$cmd" in
     # 🔵 Don't judge with tasklist/netstat — under mirrored WSL all three fail to see
     #    Chrome while CDP responds fine (measured 2026-08-23).
     _cdp_up    && echo "✅ Chrome (CDP $CDP)" || echo "❌ Chrome — ./wb up"
+    # 🔵 Which IP the sites see is the first thing to know when one starts blocking.
+    #    No launch record → say unknown, never "none".
+    if _cdp_up; then
+      if [ -f "$(_state_dir)/runtime.json" ]; then
+        python3 -c 'import json,sys; p=json.load(open(sys.argv[1])).get("proxy"); print("· proxy  " + (p or "none (direct)") + "  [as launched]")' \
+          "$(_state_dir)/runtime.json" 2>/dev/null || echo "· proxy  unknown (launch record unreadable)"
+      else
+        echo "· proxy  unknown (this Chrome was not started by launch.js)"
+      fi
+    fi
     # 🔴 A Chrome that is up but was started without the autoplay flag makes every page
     #    that speaks go silent after each reload — and it does so QUIETLY: the page
     #    renders, nothing errors, the sound is simply absent. Reported 2026-10-02, where

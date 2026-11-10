@@ -13,6 +13,7 @@
 'use strict';
 
 const http = require('http');
+const human = require('./human');
 
 function getJSON(url) {
   return new Promise((resolve, reject) => {
@@ -287,9 +288,23 @@ class RawCDP {
     const b = res.box;
     if (!b) throw new Error(`rawcdp click: resolved ${selector} but got no box`);
     if (b.w < 1 || b.h < 1) throw new Error(`rawcdp click: ${selector} has a zero-size box — playwright is needed to click it; restart Chrome`);
-    await this.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: b.x, y: b.y });
-    await this.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: b.x, y: b.y, button: 'left', clickCount: 1 });
-    await this.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: b.x, y: b.y, button: 'left', clickCount: 1 });
+    const move = (x, y) => this.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+    const down = (x, y) => this.send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 });
+    const up = (x, y) => this.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 });
+    if (!human.enabled()) { await move(b.x, b.y); await down(b.x, b.y); await up(b.x, b.y); return; }
+    // 🔵 Same curved approach as the playwright path (human.js), aimed inside the box.
+    const vp = await this.evaluate('({width: innerWidth, height: innerHeight})').catch(() => ({}));
+    // 🔴 This lane has no actionability check, and a random point can fall in a wrapped link's
+    //    gap or under a badge. Accept a point only if the topmost element there is the one at
+    //    the centre (or inside it); otherwise click the centre.
+    let target = { x: b.x, y: b.y };
+    for (let i = 0; i < 5; i += 1) {
+      const p = human.pointIn({ x: b.x - b.w / 2, y: b.y - b.h / 2, width: b.w, height: b.h });
+      const same = await this.evaluate(`(function(){var c=document.elementFromPoint(${b.x},${b.y}),h=document.elementFromPoint(${p.x},${p.y});`
+        + 'return !!c&&!!h&&(c===h||c.contains(h));})()').catch(() => false);
+      if (same) { target = p; break; }
+    }
+    await human.clickAlong(this, vp || {}, target, { move, down, up });
   }
 
   // 🔵 Open a NEW tab over raw CDP and attach to it. This is the one thing the fallback could
@@ -312,11 +327,16 @@ class RawCDP {
   }
 
   // 🔵 Type a whole string. `press` only does single keys (Enter/Tab); typing text needs this.
-  //    Input.insertText delivers the string in one round trip — faithful for plain fields and
-  //    far quicker than key-by-key. (A site that re-renders per keystroke is the rare case
+  //    Input.insertText delivers text without key events — faithful for plain fields. By default
+  //    it goes one character at a time at human spacing (human.js); WBROWSER_HUMAN=0 sends it
+  //    in one round trip. (A site that re-renders per keystroke is the rare case
   //    playwright handled better; raw CDP trades that for working at all on Chrome 152.)
   async type(text) {
-    await this.send('Input.insertText', { text: String(text == null ? '' : text) });
+    const str = String(text == null ? '' : text);
+    if (!human.enabled()) { await this.send('Input.insertText', { text: str }); return; }
+    // 🔵 One character at a time with uneven gaps (human.js) — a whole string landing in one
+    //    event is an instant bot tell.
+    for (const ch of str) { await this.send('Input.insertText', { text: ch }); await human.sleep(human.keyDelay(str.length)); }
   }
 
   close() {

@@ -26,6 +26,18 @@ const vault = require('./vault');
 const loginfields = require('./loginfields');
 const credaudit = require('./credaudit');
 const sitememory = require('./sitememory');
+const human = require('./human');
+const identity = require('./identity');
+
+// Transport for human.js on the playwright path. connectOverCDP pages have no fixed viewport
+// (viewportSize() is null), so ask the page.
+const pageMouse = (page) => ({
+  move: (x, y) => page.mouse.move(x, y),
+  down: () => page.mouse.down(),
+  up: () => page.mouse.up(),
+  wheel: (dy) => page.mouse.wheel(0, dy),
+});
+const viewportOf = (page) => page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
 const os = require('os');
 const path = require('path');
 
@@ -1122,10 +1134,10 @@ async function actViaRawCDP(cmd, tab) {
       await raw.attach(cmd.agent ? `${cmd.agent}` : null);
     } catch (e) {
       if ((cmd.goto || cmd.newtab || cmd.newwindow)) {
-        // createTab opens the URL as it makes the tab, so a following goto to the same URL is
-        // redundant — mark it so we settle instead of navigating twice.
         await capRawOpened();
-        rawOpened.push(await raw.createTab(cmd.goto || 'about:blank', { newWindow: !!cmd.newwindow }));
+        // 🔵 With a goto, open blank first: the identity override (identity.js) must be on the
+        //    session BEFORE the first request leaves, so the goto below does the navigating.
+        rawOpened.push(await raw.createTab('about:blank', { newWindow: !!cmd.newwindow }));
         done.push(cmd.newwindow ? 'newwindow' : 'newtab');
         openedTab = true;
         // 🔴 Stamp it. Without this the fallback opens tabs that nothing can identify later:
@@ -1138,8 +1150,17 @@ async function actViaRawCDP(cmd, tab) {
         throw e;   // no tab and nothing opens one — the honest "run go first" error stands
       }
     }
-    if (cmd.goto && !openedTab) { const u = await raw.goto(cmd.goto); done.push(`goto ${cmd.goto}`); result.url = u; }
-    else if (cmd.goto) { result.url = await raw.evaluate('location.href').catch(() => cmd.goto); }
+    if (cmd.goto) {
+      // 🔴 This lane opens a fresh CDP session per command and closes it after, and an override
+      //    dies with its session — so here it covers this navigation's request only, not the
+      //    page's later requests or the next command. Say so rather than imply otherwise.
+      try {
+        const id = await identity.switchTo((m, p) => raw.send(m, p), cmd.goto, CDP, null);
+        if (id.mode) done.push(`as ${id.mode} (this request only — fallback lane)`);
+        if (id.note) done.push(id.note);
+      } catch (e) { done.push(`identity not set: ${e.message.split('\n')[0]}`); }
+      const u = await raw.goto(cmd.goto); done.push(`goto ${cmd.goto}`); result.url = u;
+    }
     // 🔴 This lane ignored `wait` entirely, so it read the page the instant the tab existed.
     //    On an SPA that is before anything has rendered: measured 2026-10-01, a fresh tab on
     //    x.com had a title at 6s and its 2522-character body at 11s — but the fallback read
@@ -1545,6 +1566,15 @@ async function act(cmd) {
     //    origin and the document is parsed, carry on and say the wait was cut short.
     //    Any other failure — DNS, refused, cert — still throws, because those really
     //    did fail and pretending otherwise would be the silent success we avoid.
+    // 🔵 Decide what the tab presents as BEFORE the request leaves (identity.js): a phone on
+    //    m.* hosts, plain Chrome (never HeadlessChrome) on a headless browser.
+    // 🔴 Failing to set it never blocks the goto (a plain desktop goto does not need it), but
+    //    it is reported — a tab that should have been a phone and is not must be visible.
+    try {
+      const id = await identity.apply(page, cmd.goto, CDP);
+      if (id.mode) done.push(`as ${id.mode}`);
+      if (id.note) done.push(id.note);
+    } catch (e) { done.push(`identity not set: ${e.message.split('\n')[0]}`); }
     try {
       const resp = await page.goto(cmd.goto, { waitUntil: 'domcontentloaded', timeout: 30000 });
       // 🔵 Surface the HTTP status. Suggested 2026-09-04 (idifference): a goto to a page
@@ -1604,6 +1634,20 @@ async function act(cmd) {
       } else {
         throw e;
       }
+    }
+    // 🔵 A person moves and scrolls before acting; a bot clicks the instant the DOM exists.
+    //    Failure here never fails the goto — the page loaded — but it is reported, not hidden.
+    if (human.enabled()) {
+      try {
+        const y0 = await page.evaluate(() => scrollY);
+        await human.warmUp(page, await viewportOf(page), pageMouse(page));
+        // 🔴 The wheel back is relative; a scroll clipped at the page end (or a smooth-scroll
+        //    page) would not land where it started. Put it back exactly, so read/shot see
+        //    what they saw before warm-up existed.
+        await page.evaluate((y) => { if (scrollY !== y) scrollTo({ top: y, behavior: 'instant' }); }, y0);
+        done.push('warm-up');
+      }
+      catch (e) { done.push(`warm-up skipped: ${e.message.split('\n')[0]}`); }
     }
   }
   if (cmd.googleLogin) {
@@ -1787,7 +1831,37 @@ async function act(cmd) {
     //    9989ms`. click() does its own scrolling, so a shorter, non-fatal pre-scroll is
     //    a nicety, not a gate — swallow its failure and let click() try.
     await el.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
-    await el.click({ timeout: 10000 });
+    let how = '';
+    if (human.enabled()) {
+      // 🔵 Let playwright do its actionability checks (visible, stable, not covered) without
+      //    clicking, then travel there along a curve and press like a hand would (human.js).
+      await el.click({ trial: true, timeout: 10000 });
+      const box = await el.boundingBox();
+      // 🔴 trial checked the CENTRE; a random point elsewhere can fall in the gap of a wrapped
+      //    link or under a badge covering part of the box. Only aim at a point the element
+      //    itself (or its child) would receive; if none of a few picks qualifies, use the
+      //    centre trial already vetted.
+      let aim = null;
+      if (box && box.width >= 1 && box.height >= 1) {
+        for (let i = 0; i < 5 && !aim; i += 1) {
+          const p = human.pointIn(box);
+          const hits = await el.evaluate((n, q) => {
+            const h = document.elementFromPoint(q.x, q.y); return !!h && (h === n || n.contains(h));
+          }, p).catch(() => false);
+          if (hits) aim = p;
+        }
+        if (!aim) aim = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+      }
+      if (aim) {
+        await human.clickAlong(page, await viewportOf(page), aim, pageMouse(page));
+      } else {
+        // 🔴 No box to aim at (zero-size hit target). Click it the direct way and SAY so.
+        await el.click({ timeout: 10000 });
+        how = ' (direct: no box to aim at)';
+      }
+    } else {
+      await el.click({ timeout: 10000 });
+    }
     let what = cmd.click;
     try {
       const d = await Promise.race([
@@ -1801,7 +1875,7 @@ async function act(cmd) {
       ]);
       if (d) what = `${cmd.click} -> ${d}`;
     } catch { /* describing it is a nicety; the click already happened */ }
-    done.push(`click ${what}`);
+    done.push(`click ${what}${how}`);
   }
   if (cmd.type) {
     // 🔴 Type like a person by default: focus the field, then send real keystrokes.
@@ -1834,7 +1908,14 @@ async function act(cmd) {
       try {
         await field.fill('', { timeout: 3000 });
       } catch { /* contenteditable and friends refuse fill; carry on and append */ }
-      await field.pressSequentially(text, { delay: Number(delay) || 25, timeout: 30000 });
+      if (delay != null || !human.enabled()) {
+        await field.pressSequentially(text, { delay: Number(delay) || 25, timeout: 30000 });
+      } else {
+        // 🔵 Uneven spacing, 50–150ms per key (human.js) — an even beat is a bot tell.
+        const str = String(text);
+        for (const ch of str) { await page.keyboard.type(ch); await human.sleep(human.keyDelay(str.length)); }
+        if (human.tightened(str.length)) done.push('long text: keys spaced closer to finish in ~30s');
+      }
     }
     // 🔵 Never log what was typed — it may be a password.
     done.push(`type -> ${selector}${fast ? ' (fast)' : ''}`);

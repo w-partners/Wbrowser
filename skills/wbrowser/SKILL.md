@@ -135,6 +135,13 @@ command still reported success. Use it only for long text in a plain, quiet fiel
 🔵 **Check what landed.** `wb read` now prints each field's current contents
 (`= 'text'` or `(empty)`), so verifying is one command, not a hand-written `eval`.
 
+🔵 **Input is human-paced by default.** Clicks travel a curved path and are held briefly;
+keys are 50–150ms apart at random; `go` is followed by a small pointer drift and scroll. So
+a click takes about half a second and 100 characters take about 10 seconds — that is
+expected, not a hang. A `go` to an `m.` host presents the tab as a phone; other hosts turn
+it back. Outbound IP comes from `WBROWSER_PROXY` if set at Chrome start (`wb status` shows
+it). `WBROWSER_HUMAN=0` / `WBROWSER_MOBILE=0` turn these off.
+
 ## 🔴 Before anything irreversible
 
 Submit, pay, delete, send:

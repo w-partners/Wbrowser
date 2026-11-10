@@ -675,12 +675,24 @@ This tool drives a browser that holds **all your logins**. Treat it accordingly.
 | `WBROWSER_PROFILE` | `Default` | Profile name within it |
 | `WBROWSER_CDP_PORT` | `9222` | Chrome debugging port |
 | `WBROWSER_PORT` | `7981` | Control engine port |
+| `WBROWSER_PROXY` | — | Send all traffic through this proxy: `http://host:port` or `socks5://host:port` (a residential gateway, a phone tether, a box on your home line). No username/password — Chrome cannot use them; allowlist your IP or run a local forwarder. Read at Chrome start only. |
+| `WBROWSER_HUMAN` | on | `0` turns off human-paced input (see below) |
+| `WBROWSER_MOBILE` | on | `0` stops `go` from turning the tab into a phone on `m.` sites |
 | `WIN_AGENT` | derived | Name shown in banner and tab title |
 | `WIN_TAB` | `main` | Which of that agent's tabs to drive |
 | `WBROWSER_MCP_TOKEN` | — | **Required** for remote MCP |
 | `WBROWSER_NOTES` | — | Directory for daily work logs (optional) |
 | `WBROWSER_FORCE_RAWCDP` | — | `1` pins the engine to the raw-CDP path. Use it when playwright cannot attach to your Chrome version. Once set, nothing in the engine can revoke it. |
 | `WBROWSER_STARIAN_PORT` | `7982` | Port for the read-only control surface (see below) |
+
+> 🔵 **How it drives a page, by default.** A click travels a curved path to a point inside
+> the element and is held briefly, the way a hand does it; `type` spaces keys 50–150ms
+> apart at random; after `go` the pointer drifts and the page scrolls a little and back.
+> A `go` to an `m.` host (e.g. `m.example.com`) presents the tab as a phone — user agent,
+> client hints, viewport, touch — before the request leaves, and any other host turns it
+> back. On a headless browser the `HeadlessChrome` marker is removed from what pages see.
+> This makes clicks and typing slower than instant; `type --fast` and `WBROWSER_HUMAN=0`
+> are there when speed matters more.
 
 ---
 

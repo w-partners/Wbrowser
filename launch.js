@@ -13,6 +13,8 @@
 //   WBROWSER_PROFILE_DIR  profile folder (default: <home>/.wbrowser)
 //   WBROWSER_PROFILE      profile name (default: Default)
 //   WBROWSER_CDP_PORT     CDP port (default: 9222)
+//   WBROWSER_PROXY        route all traffic through this proxy, e.g. http://host:port or
+//                         socks5://host:port (residential gateway, phone tether, home box)
 
 // 🔴 Refuse before doing anything if this checkout was never installed. Neither of
 //    these files needs playwright itself, which is exactly the trap: they ran fine on a
@@ -28,6 +30,29 @@ const path = require('path');
 const http = require('http');
 
 const CDP_PORT = process.env.WBROWSER_CDP_PORT || 9222;
+
+// 🔴 Chrome's --proxy-server takes no username/password — credentials in the URL are dropped
+//    and every request then fails auth (or, worse, goes out on the wrong IP if the proxy lets
+//    it). Refuse up front instead. Use an IP-allowlisted gateway, or a local forwarder that
+//    holds the credentials, and point WBROWSER_PROXY at that.
+const PROXY = (() => {
+  const raw = (process.env.WBROWSER_PROXY || '').trim();
+  if (!raw) return '';
+  let u;
+  try { u = new URL(raw); } catch { u = null; }
+  if (!u || !/^(https?|socks[45]):$/.test(u.protocol) || !u.hostname) {
+    console.error(`🔴 WBROWSER_PROXY is not a proxy URL: ${raw}`);
+    console.error('   Expected e.g. http://host:port or socks5://host:port');
+    process.exit(1);
+  }
+  if (u.username || u.password) {
+    console.error('🔴 WBROWSER_PROXY carries a username/password. Chrome cannot use those.');
+    console.error('   Allowlist this machine\'s IP at the provider, or run a local forwarder that');
+    console.error('   holds the credentials and set WBROWSER_PROXY to it.');
+    process.exit(1);
+  }
+  return `${u.protocol}//${u.host}`;
+})();
 const PROFILE = process.env.WBROWSER_PROFILE || 'Default';
 
 // ---------------------------------------------------------------- platform
@@ -348,6 +373,22 @@ if (require.main !== module) return;
     // 🔵 Measure the capability rather than parse a command line: the running browser either
     //    allows audio without a gesture or it does not, and that is the thing people care
     //    about. Never fatal — a probe that cannot run must not stop anyone from working.
+    // 🔴 Same trap for the proxy: Chrome took its --proxy-server (or none) at startup.
+    //    Asking for a proxy now and seeing ALREADY_UP must not read as "proxied".
+    // 🔴 No record means we do not know — never report that as "no proxy".
+    let ranWith;
+    try { ranWith = JSON.parse(fs.readFileSync(path.join(stateDir(), 'runtime.json'), 'utf8')).proxy || null; } catch { ranWith = undefined; }
+    if (ranWith === undefined) {
+      if (PROXY) {
+        console.log(`🔴 proxy: unknown — this Chrome was not started by launch.js, so ${PROXY} may not apply.`);
+        console.log('   Chrome reads the proxy only at startup — stop it and start again to be sure.');
+      }
+    } else if ((PROXY || null) !== ranWith) {
+      console.log(`🔴 proxy: this Chrome runs with ${ranWith || 'no proxy'}, you asked for ${PROXY || 'no proxy'}.`);
+      console.log('   Chrome reads the proxy only at startup — stop it and start again to change it.');
+    } else if (PROXY) {
+      console.log(`proxy       ${PROXY}`);
+    }
     const gap = await autoplayGap();
     if (gap) {
       console.log('');
@@ -517,6 +558,12 @@ if (require.main !== module) return;
     //    gesture requirement; it grants no other capability.
     '--autoplay-policy=no-user-gesture-required',
   ];
+  if (PROXY) {
+    args.push(`--proxy-server=${PROXY}`);
+    // 🔴 Without this, WebRTC can still reveal the real IP around the proxy.
+    args.push('--force-webrtc-ip-handling-policy=disable_non_proxied_udp');
+    console.log(`proxy       ${PROXY}`);
+  }
   if (wantHeadless) {
     // 🔵 For servers with no display. Existing login sessions still work, but a person
     //    cannot log in interactively — in that case move sessions over with the session
@@ -615,6 +662,7 @@ if (require.main !== module) return;
       profile: PROFILE,
       cdpPort: Number(CDP_PORT),
       headless: wantHeadless,
+      proxy: PROXY || null,
       chrome: CHROME,
       browser: v.Browser,
       startedAt: new Date().toISOString(),
