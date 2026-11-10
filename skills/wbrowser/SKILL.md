@@ -124,23 +124,17 @@ they would from a person. No native-setter trick is needed — just type.
 
 ```bash
 wb type '<selector>' 'the text'
-wb type --fast '<selector>' 'long text'   # sets the value in one go
 ```
-
-🔴 **Do not reach for `--fast` by default.** It sets the value in one shot, which any
-site that re-renders while you type will partly swallow — measured on X's composer: a
-92-character string with a link arrived as 55, losing everything before the URL, and the
-command still reported success. Use it only for long text in a plain, quiet field.
 
 🔵 **Check what landed.** `wb read` now prints each field's current contents
 (`= 'text'` or `(empty)`), so verifying is one command, not a hand-written `eval`.
 
-🔵 **Input is human-paced by default.** Clicks travel a curved path and are held briefly;
+🔴 **Input is always human-paced — there is no off switch.** Clicks travel a curved path and are held briefly;
 keys are 50–150ms apart at random; `go` is followed by a small pointer drift and scroll. So
 a click takes about half a second and 100 characters take about 10 seconds — that is
 expected, not a hang. A `go` to an `m.` host presents the tab as a phone; other hosts turn
 it back. Outbound IP comes from `WBROWSER_PROXY` if set at Chrome start (`wb status` shows
-it). `WBROWSER_HUMAN=0` / `WBROWSER_MOBILE=0` turn these off.
+it). `type --fast` and a fixed `delay` are refused with 400; send the command without them.
 
 ## 🔴 Before anything irreversible
 
@@ -362,8 +356,7 @@ wb shot out.png --agent my-agent      # screenshot my-agent's tab, not a guess
 🔴 `--agent` is a real flag (added because it used to be silently swallowed — it looked
 like it worked and did nothing). Unknown flags now **fail loudly** instead of being
 dropped: `wb shot out.png --typo` says so rather than screenshotting the wrong tab.
-`--account`, `--tab`, `--agent`, `--browser` work on any command; `--window`/`--fast`
-are for `go`/`type`.
+`--account`, `--tab`, `--agent`, `--browser` work on any command; `--window` is for `go`.
 
 ## Several accounts
 

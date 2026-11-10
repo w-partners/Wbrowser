@@ -188,6 +188,14 @@ V=$(act '{"eval":"JSON.stringify(window.__wbGaps)","agent":"'"$AGENT"'"}')
 #       delay lands near 30ms, so the line goes between them.
 check "type spaces its keystrokes apart" "$V" \
   "(lambda g: len(g) >= 5 and sorted(g)[len(g)//2] >= 22)(__import__('json').loads(d.get('result') or '[]'))"
+# 🔴 0.34.0: human spacing is mandatory — 50–150ms at random. An even beat (the old 25ms)
+#    or anything under ~45ms median means some path bypassed human.js.
+check "type spacing is human (median >= 45ms, uneven)" "$V" \
+  "(lambda g: len(g) >= 5 and sorted(g)[len(g)//2] >= 45 and max(g) - min(g) >= 20)(__import__('json').loads(d.get('result') or '[]'))"
+# 🔴 The old one-shot mode must be refused out loud, not quietly accepted.
+F=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 -X POST "http://127.0.0.1:$PORT_ENGINE/act" \
+  -H 'Content-Type: application/json' -d '{"type":{"selector":"textarea[name=q]","text":"x","fast":true},"agent":"'"$AGENT"'"}')
+if [ "$F" = "400" ]; then ok "type --fast is refused (human input is mandatory)"; else bad "type --fast is refused (human input is mandatory)" "got $F"; fi
 
 # --- a mistyped key is refused, not silently ignored -------------------------
 # 🔴 Reported 2026-08-31: someone read the docs, sent {"action":"read"}, and got 200
@@ -348,6 +356,16 @@ check "Control+a then Backspace empties the field" "$V" "d.get('result') == ''"
 # 🔵 And that a lowercase chord is normalised — the actual bug from v0.5.0.
 R=$(act '{"press":"Control+a","agent":"'"$AGENT"'"}')
 check "a lowercase chord is normalised" "$R" "any('Control+A' in s for s in d.get('done',[]))"
+
+# 🔴 `wb status` asks whoami.py for the profile; when runtime.json does not describe this
+#    Chrome it reads chrome://version in a tab — and that tab was never closed (73 of 79 tabs
+#    on one machine, 2026-11-13). An empty XDG_STATE_HOME forces that path.
+vtabs() { curl -s "http://127.0.0.1:$PORT_CDP/json" | python3 -c "import json,sys;print(sum(t.get('url','').startswith('chrome://version') for t in json.load(sys.stdin)))"; }
+B=$(vtabs)
+XDG_STATE_HOME="$(mktemp -d)" WBROWSER_ENGINE="http://127.0.0.1:$PORT_ENGINE" \
+  python3 whoami.py "http://127.0.0.1:$PORT_CDP" >/dev/null 2>&1
+A=$(vtabs)
+check "whoami closes its chrome://version tab" "{\"before\":$B,\"after\":$A}" "d['after'] == d['before']"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1

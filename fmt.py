@@ -69,6 +69,8 @@ def main():
         print("  🔴 screenshot:", d["shotError"], "(the rest of the command still ran)")
     if d.get("evalError"):
         print("  ❌ execution error:", d["evalError"])
+    if (d.get("autologin") or {}).get("submitError"):
+        print("  🔴 login filled, but", d["autologin"]["submitError"])
 
     ICON = {"error": "🔴", "warning": "🟡", "warn": "🟡", "info": "🔵", "log": "  ", "debug": "  "}
 

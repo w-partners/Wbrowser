@@ -7,7 +7,7 @@
 // 🔴 Headless: `--headless=new` puts "HeadlessChrome" in the UA and the client-hint brands,
 //    which bot defences block on sight. On a headless browser every goto overrides both to the
 //    plain Chrome they would otherwise be.
-// 🔵 WBROWSER_MOBILE=0 turns off the mobile switch.
+// 🔴 Mandatory — no off switch (0.34.0).
 
 const sessions = new WeakMap();      // page → { cdp, mode }
 
@@ -89,7 +89,7 @@ function desktopHints(v) {
 // reply when something was deliberately left undone.
 async function switchTo(send, url, cdpBase, from) {
   const v = await browserVersion(cdpBase);
-  let want = (process.env.WBROWSER_MOBILE !== '0' && isMobileHost(url)) ? 'mobile'
+  let want = isMobileHost(url) ? 'mobile'
     : (v.headless ? 'desktop' : null);
   let note = null;
   // 🔴 Not reproducible → treat as "no override" (null), NOT as an error: a throw here would
@@ -122,7 +122,7 @@ async function apply(page, url, cdpBase) {
   let s = sessions.get(page);
   if (!s) {
     const v = await browserVersion(cdpBase);
-    const want = (process.env.WBROWSER_MOBILE !== '0' && isMobileHost(url)) || v.headless;
+    const want = isMobileHost(url) || v.headless;
     if (!want) return { mode: null, note: null };   // nothing to override, no session needed
     s = { cdp: await page.context().newCDPSession(page), mode: null };
     sessions.set(page, s);

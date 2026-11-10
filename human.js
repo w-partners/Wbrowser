@@ -7,9 +7,7 @@
 //    pointer movement after it loads.
 // 🔵 Both the playwright path (engine.js) and the raw-CDP fallback (rawcdp.js) draw from here,
 //    so the two never drift into different "humans".
-// 🔵 WBROWSER_HUMAN=0 turns it all off (old behaviour: instant clicks, 25ms keys, no warm-up).
-
-const enabled = () => process.env.WBROWSER_HUMAN !== '0';
+// 🔴 Mandatory — there is no off switch (0.34.0). Every input path routes through here.
 
 const rand = (a, b) => a + Math.random() * (b - a);
 
@@ -22,6 +20,8 @@ const keyDelay = (len = 0) => {
   const mean = Math.min(100, TYPE_BUDGET_MS / Math.max(1, len));
   return Math.max(1, Math.round(mean * rand(0.5, 1.5)));
 };
+// How long a key is held down, 40–120ms.
+const holdDelay = () => Math.round(rand(40, 120));
 const tightened = (len) => TYPE_BUDGET_MS / Math.max(1, len) < 100;
 
 // A point inside the middle half of a box — people do not hit the exact centre, but they do
@@ -86,4 +86,4 @@ async function warmUp(key, viewport, { move, wheel }) {
   await sleep(rand(100, 300));
 }
 
-module.exports = { enabled, keyDelay, tightened, pointIn, mousePath, clickAlong, warmUp, sleep };
+module.exports = { keyDelay, holdDelay, tightened, pointIn, mousePath, clickAlong, warmUp, sleep };

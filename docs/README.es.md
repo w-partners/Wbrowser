@@ -517,8 +517,6 @@ Esta herramienta controla un navegador que contiene **todas tus sesiones**. Trá
 | `WBROWSER_CDP_PORT` | `9222` | Puerto de depuración de Chrome |
 | `WBROWSER_PORT` | `7981` | Puerto del motor de control |
 | `WBROWSER_PROXY` | — | Envía todo el tráfico por este proxy: `http://host:port` o `socks5://host:port` (pasarela residencial, anclaje de un móvil, un equipo en la línea de casa). Sin usuario/contraseña — Chrome no los usa; autoriza tu IP o usa un reenviador local. Solo se lee al arrancar Chrome. |
-| `WBROWSER_HUMAN` | activado | `0` desactiva la entrada a ritmo humano (ver abajo) |
-| `WBROWSER_MOBILE` | activado | `0` evita que `go` convierta la pestaña en un móvil en sitios `m.` |
 | `WBROWSER_AGENT` | automático | Nombre mostrado en el borde y la pestaña |
 | `WBROWSER_MCP_TOKEN` | — | **Obligatorio** para MCP remoto |
 | `WBROWSER_NOTES` | — | Directorio para registros de trabajo (opcional) |
@@ -529,7 +527,7 @@ Esta herramienta controla un navegador que contiene **todas tus sesiones**. Trá
 > Un `go` a un host `m.` (p. ej. `m.example.com`) presenta la pestaña como un móvil — agente de
 > usuario, client hints, viewport, táctil — antes de que salga la petición; otro host la devuelve.
 > En un navegador headless se quita la marca `HeadlessChrome` de lo que ven las páginas.
-> Los clics y la escritura son más lentos; usa `type --fast` o `WBROWSER_HUMAN=0` si prima la velocidad.
+> Siempre activo, sin interruptor (`type --fast` se rechaza): un clic ~0,5 s, 100 caracteres ~10 s.
 
 ---
 

@@ -79,6 +79,10 @@ def autologin():
     st, resp = post("/cred/login", {"origin": ORIGIN, "agent": AGENT, "confirmSubmit": CONFIRM})
     resp = resp or {}
     if st == 200:
+        if resp.get("submitError"):
+            # 🔴 Filled but the submit click failed — saying "✅ Filled" here reads as success.
+            print(f"wb login: filled the login for {ORIGIN}, but {resp['submitError']}", file=sys.stderr)
+            sys.exit(1)
         if resp.get("submitted"):
             print(f"✅ Filled and submitted the login for {ORIGIN}.")
         elif resp.get("needsConfirm"):

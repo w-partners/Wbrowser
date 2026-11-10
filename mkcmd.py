@@ -37,7 +37,7 @@ def no_unknown_flags(rest, op):
             raise SystemExit(
                 "wb %s: unknown option %r.\n"
                 "       wb's own flags (--account, --tab, --agent, --browser) work on any\n"
-                "       command; --window/--fast are for go/type. Nothing else is a flag."
+                "       command; --window is for go. Nothing else is a flag."
                 % (op, a))
 
 
@@ -142,9 +142,8 @@ def build(argv):
         return {"click": rest[0], "wait": 1200, "read": True}
     if op == "type":
         # Preserve spaces in the text as-is — join all the remaining arguments.
-        # 🔵 --fast sets the value in one shot instead of typing it. Quicker on long text
-        #    in a plain field, but it is not what a person does, and sites that re-render
-        #    while you type will drop part of it. Opt-in for that reason.
+        # 🔴 --fast is passed through so the engine can refuse it with the reason: since
+        #    0.34.0 every keystroke is human-paced and there is no one-shot mode.
         args = list(rest)
         fast = False
         if "--fast" in args:
@@ -152,7 +151,7 @@ def build(argv):
             fast = True
         # 🔵 Only the selector is required — `wb type <selector>` with no text clears
         #    the field, which is a real thing people do. Do not "fix" this into two.
-        need(args, 1, "type <selector> [text]   [--fast]   (no text clears the field)")
+        need(args, 1, "type <selector> [text]   (no text clears the field)")
         cmd = {"type": {"selector": args[0], "text": " ".join(args[1:])}}
         if fast:
             cmd["type"]["fast"] = True

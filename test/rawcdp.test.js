@@ -171,12 +171,4 @@ test('type sends the whole string, not just one key', async () => {
   const sent = r.calls.filter((c) => c.method === 'Input.insertText').map((c) => c.params.text);
   assert.strictEqual(sent.join(''), 'hello');
   assert.strictEqual(sent.length, 5, 'human typing sends one character at a time');
-  // WBROWSER_HUMAN=0: the old one-shot path.
-  process.env.WBROWSER_HUMAN = '0';
-  try {
-    const r2 = stubbedRawCDP();
-    await r2.type('hello');
-    const one = r2.calls.filter((c) => c.method === 'Input.insertText');
-    assert.deepStrictEqual(one.map((c) => c.params.text), ['hello']);
-  } finally { delete process.env.WBROWSER_HUMAN; }
 });

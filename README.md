@@ -314,7 +314,6 @@ window, and they persist there from then on.
 ./wb read                  summarize the current page
 ./wb click <selector>      click an element
 ./wb type <selector> <text>   type into a field, one keystroke at a time
-./wb type --fast <sel> <text> set the value in one go (see below)
 ./wb press <key>           Enter, Tab, Escape, ArrowDown…
 ./wb eval '<js>'           run JavaScript in the page
 ./wb console [regex]       console logs + uncaught exceptions
@@ -403,7 +402,7 @@ skill/prompt around Wbrowser, put them in it:
    events they would from a person and no native-setter trick is needed. This used to
    be the other way round — `type` set the value in one shot, which framework forms
    swallowed — and the workaround was `eval` with a native setter. That is no longer
-   necessary. Reach for `--fast` only when the text is long and the field is plain.
+   necessary. Every keystroke is human-paced; there is no one-shot mode.
 5. **Check what you're attached to.** `browser_status` tells you whether the window
    actually holds logins. An empty profile answers every command successfully while
    doing nothing useful.
@@ -676,8 +675,6 @@ This tool drives a browser that holds **all your logins**. Treat it accordingly.
 | `WBROWSER_CDP_PORT` | `9222` | Chrome debugging port |
 | `WBROWSER_PORT` | `7981` | Control engine port |
 | `WBROWSER_PROXY` | — | Send all traffic through this proxy: `http://host:port` or `socks5://host:port` (a residential gateway, a phone tether, a box on your home line). No username/password — Chrome cannot use them; allowlist your IP or run a local forwarder. Read at Chrome start only. |
-| `WBROWSER_HUMAN` | on | `0` turns off human-paced input (see below) |
-| `WBROWSER_MOBILE` | on | `0` stops `go` from turning the tab into a phone on `m.` sites |
 | `WIN_AGENT` | derived | Name shown in banner and tab title |
 | `WIN_TAB` | `main` | Which of that agent's tabs to drive |
 | `WBROWSER_MCP_TOKEN` | — | **Required** for remote MCP |
@@ -685,14 +682,14 @@ This tool drives a browser that holds **all your logins**. Treat it accordingly.
 | `WBROWSER_FORCE_RAWCDP` | — | `1` pins the engine to the raw-CDP path. Use it when playwright cannot attach to your Chrome version. Once set, nothing in the engine can revoke it. |
 | `WBROWSER_STARIAN_PORT` | `7982` | Port for the read-only control surface (see below) |
 
-> 🔵 **How it drives a page, by default.** A click travels a curved path to a point inside
+> 🔴 **How it drives a page — always.** A click travels a curved path to a point inside
 > the element and is held briefly, the way a hand does it; `type` spaces keys 50–150ms
 > apart at random; after `go` the pointer drifts and the page scrolls a little and back.
 > A `go` to an `m.` host (e.g. `m.example.com`) presents the tab as a phone — user agent,
 > client hints, viewport, touch — before the request leaves, and any other host turns it
 > back. On a headless browser the `HeadlessChrome` marker is removed from what pages see.
-> This makes clicks and typing slower than instant; `type --fast` and `WBROWSER_HUMAN=0`
-> are there when speed matters more.
+> This is always on — there is no switch to turn it off, and `type --fast` is refused —
+> so clicks and typing are slower than instant (a click ~0.5s, 100 characters ~10s).
 
 ---
 

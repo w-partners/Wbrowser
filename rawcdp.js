@@ -254,7 +254,9 @@ class RawCDP {
 
   async press(key) {
     // A minimal key press: keyDown + keyUp. Enough for Enter/Tab and single characters.
+    await human.sleep(human.keyDelay());
     await this.send('Input.dispatchKeyEvent', { type: 'keyDown', key });
+    await human.sleep(human.holdDelay());
     await this.send('Input.dispatchKeyEvent', { type: 'keyUp', key });
   }
 
@@ -291,7 +293,6 @@ class RawCDP {
     const move = (x, y) => this.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
     const down = (x, y) => this.send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 });
     const up = (x, y) => this.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 });
-    if (!human.enabled()) { await move(b.x, b.y); await down(b.x, b.y); await up(b.x, b.y); return; }
     // 🔵 Same curved approach as the playwright path (human.js), aimed inside the box.
     const vp = await this.evaluate('({width: innerWidth, height: innerHeight})').catch(() => ({}));
     // 🔴 This lane has no actionability check, and a random point can fall in a wrapped link's
@@ -327,13 +328,11 @@ class RawCDP {
   }
 
   // 🔵 Type a whole string. `press` only does single keys (Enter/Tab); typing text needs this.
-  //    Input.insertText delivers text without key events — faithful for plain fields. By default
-  //    it goes one character at a time at human spacing (human.js); WBROWSER_HUMAN=0 sends it
-  //    in one round trip. (A site that re-renders per keystroke is the rare case
+  //    Input.insertText delivers text without key events — faithful for plain fields. It goes
+  //    one character at a time at human spacing (human.js) — always. (A site that re-renders per keystroke is the rare case
   //    playwright handled better; raw CDP trades that for working at all on Chrome 152.)
   async type(text) {
     const str = String(text == null ? '' : text);
-    if (!human.enabled()) { await this.send('Input.insertText', { text: str }); return; }
     // 🔵 One character at a time with uneven gaps (human.js) — a whole string landing in one
     //    event is an instant bot tell.
     for (const ch of str) { await this.send('Input.insertText', { text: ch }); await human.sleep(human.keyDelay(str.length)); }

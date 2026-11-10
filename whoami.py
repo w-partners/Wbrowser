@@ -81,6 +81,16 @@ def profile_of(cdp):
     # Read chrome://version through the engine
     import re
     engine = os.environ.get("WBROWSER_ENGINE", "http://127.0.0.1:7981")
+    # 🔴 Close the probe tab after reading. It used to stay open, so every `wb status` left one
+    #    chrome://version tab behind — 73 of 79 tabs on one machine (2026-11-13). Close only the
+    #    version tabs that appeared during this call, never one that was already open.
+    def version_tabs():
+        try:
+            return {t["id"] for t in cdp_json(cdp, "/json")
+                    if t.get("type") == "page" and t.get("url", "").startswith("chrome://version")}
+        except Exception:
+            return None
+    before = version_tabs()
     try:
         body = json.dumps({"tab": "_whoami", "newtab": True,
                            "goto": "chrome://version", "wait": 600, "read": True}).encode()
@@ -89,6 +99,16 @@ def profile_of(cdp):
         page = (json.load(urllib.request.urlopen(req, timeout=25)).get("page") or {})
         text = page.get("text", "")
     except Exception:
+        text = ""
+    finally:
+        after = version_tabs()
+        if before is not None and after:
+            for tid in after - before:
+                try:
+                    urllib.request.urlopen(cdp + "/json/close/" + tid, timeout=3).read()
+                except Exception as e:
+                    print(f"   (could not close the probe tab {tid}: {e})", file=sys.stderr)
+    if not text:
         return browser, None
 
     # Grab the Windows path that follows '프로필 경로' / 'Profile Path'

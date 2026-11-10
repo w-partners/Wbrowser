@@ -38,6 +38,54 @@ const pageMouse = (page) => ({
   wheel: (dy) => page.mouse.wheel(0, dy),
 });
 const viewportOf = (page) => page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
+
+// 🔴 Every click and every keystroke the engine makes goes through these two — commands,
+//    login autofill, "Sign in with Google" alike. Human-shaped input is not optional
+//    (0.34.0): there is no switch that turns it off, so no path can quietly bypass it.
+async function humanClick(page, el, timeout = 10000) {
+  // Let playwright do its actionability checks (visible, stable, not covered) without
+  // clicking, then travel there along a curve and press like a hand would (human.js).
+  await el.click({ trial: true, timeout });
+  const box = await el.boundingBox();
+  if (!box || box.width < 1 || box.height < 1) {
+    throw new Error('the element has no box to aim at (zero-size or not rendered) — a hand cannot click it either');
+  }
+  // 🔴 trial checked the CENTRE; a random point elsewhere can fall in the gap of a wrapped
+  //    link or under a badge covering part of the box. Only aim at a point the element
+  //    itself (or its child) would receive; if none of a few picks qualifies, use the
+  //    centre trial already vetted.
+  let aim = null;
+  for (let i = 0; i < 5 && !aim; i += 1) {
+    const p = human.pointIn(box);
+    const hits = await el.evaluate((n, q) => {
+      const h = document.elementFromPoint(q.x, q.y); return !!h && (h === n || n.contains(h));
+    }, p).catch(() => false);
+    if (hits) aim = p;
+  }
+  if (!aim) aim = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  await human.clickAlong(page, await viewportOf(page), aim, pageMouse(page));
+}
+
+// Focus, clear with keys (select-all + Backspace, as a person would), then type with human
+// spacing. Returns a note when long text forced tighter spacing.
+async function humanType(page, field, text) {
+  // 🔴 Scroll it into view and focus it — do not click. A field below the fold is
+  //    perfectly typeable but not clickable, and click() then times out on something
+  //    that was never broken. Measured 2026-08-25: an input at y=972 in an 805px
+  //    viewport failed this way.
+  await field.scrollIntoViewIfNeeded({ timeout: 10000 });
+  await field.focus({ timeout: 10000 });
+  const has = await field.evaluate((n) => (('value' in n) ? n.value : n.textContent || '').length > 0).catch(() => true);
+  if (has) {
+    await page.keyboard.press('ControlOrMeta+A');
+    await human.sleep(human.keyDelay());
+    await page.keyboard.press('Backspace');
+    await human.sleep(human.keyDelay());
+  }
+  const str = String(text == null ? '' : text);
+  for (const ch of str) { await page.keyboard.type(ch); await human.sleep(human.keyDelay(str.length)); }
+  return human.tightened(str.length) ? 'long text: keys spaced closer to finish in ~30s' : null;
+}
 const os = require('os');
 const path = require('path');
 
@@ -517,10 +565,11 @@ async function accountOf(context) {
   // Do it once and cache it — doing it on every request is slow.
   let acc = null;
   let probe = null;
+  let reuse = null;
   try {
     // 🔵 If a chrome://version tab is already open, reuse it. Opening a new one
     //    every time piles up tabs.
-    const reuse = context.pages().find((p) => !p.isClosed() && p.url().startsWith('chrome://version'));
+    reuse = context.pages().find((p) => !p.isClosed() && p.url().startsWith('chrome://version'));
     probe = reuse || await context.newPage();
     if (!reuse) {
       await probe.goto('chrome://version', { waitUntil: 'domcontentloaded', timeout: 8000 });
@@ -536,7 +585,9 @@ async function accountOf(context) {
     acc = m ? m[1].trim() : null;
   } catch { /* if unreadable leave it null — we do not guess */ } finally {
     // Close only the tab we opened. Never close a tab the user opened.
-    if (probe && !probe.isClosed() && probe.url().startsWith('chrome://version')) {
+    // 🔴 Judge by "we opened it", not by its URL: a goto that timed out leaves the tab on
+    //    about:blank, and a URL check then left it open for good.
+    if (probe && probe !== reuse && !probe.isClosed()) {
       try { await probe.close(); } catch { /* noop */ }
     }
   }
@@ -1363,7 +1414,7 @@ async function fillLogin(page, origin, entry, { confirmSubmit = false } = {}) {
   }
   const typeInto = async (ref, value) => {
     if (!ref) return;
-    await page.fill(`[data-wb-ref="${ref}"]`, value);
+    await humanType(page, page.locator(`[data-wb-ref="${ref}"]`).first(), value);
   };
   if (picked.username && entry.username) await typeInto(picked.username, entry.username);
   await typeInto(picked.password, entry.password);
@@ -1374,12 +1425,20 @@ async function fillLogin(page, origin, entry, { confirmSubmit = false } = {}) {
   const shouldSubmit = remembered === 'always' || (remembered === undefined && confirmSubmit === true);
   if (confirmSubmit === true && remembered === undefined) credSubmitPolicy.set(origin, 'always');
   let submitted = false;
+  let submitError;
   if (shouldSubmit && picked.submit) {
-    await page.click(`[data-wb-ref="${picked.submit}"]`).catch(() => {});
-    submitted = true;
-    credaudit.append(CRED_AUDIT_FILE, { ts: new Date().toISOString(), action: 'submit', origin });
+    // 🔴 Only claim (and audit) a submit that happened. A swallowed click failure used to be
+    //    recorded as submitted — a success report for a click that never landed.
+    try {
+      await humanClick(page, page.locator(`[data-wb-ref="${picked.submit}"]`).first());
+      submitted = true;
+      credaudit.append(CRED_AUDIT_FILE, { ts: new Date().toISOString(), action: 'submit', origin });
+    } catch (e) {
+      submitError = `submit not clicked: ${e.message.split('\n')[0]}`;
+      credaudit.append(CRED_AUDIT_FILE, { ts: new Date().toISOString(), action: 'submit-failed', origin, note: submitError });
+    }
   }
-  return { ok: true, filled: true, submitted, needsConfirm: !shouldSubmit && !!picked.submit };
+  return { ok: true, filled: true, submitted, submitError, needsConfirm: !shouldSubmit && !!picked.submit };
 }
 
 // Automatically fill a login the moment an agent's own page shows a login form for a site whose
@@ -1433,7 +1492,7 @@ async function maybeAutofillLogin(page, cmd, summary) {
   // Submit stays gated by the same per-site policy; first time waits for an explicit confirm.
   const r = await fillLogin(page, origin, entry, { confirmSubmit: false }).catch(() => null);
   if (!r || r.error) return null;                   // detection refused → do not force it
-  return { origin, submitted: r.submitted, needsConfirm: r.needsConfirm };
+  return { origin, submitted: r.submitted, submitError: r.submitError, needsConfirm: r.needsConfirm };
 }
 
 async function act(cmd) {
@@ -1443,6 +1502,15 @@ async function act(cmd) {
       `unknown ${unknown.length > 1 ? 'keys' : 'key'}: ${unknown.map((k) => `"${k}"`).join(', ')}. `
       + 'Verbs go in as keys, not as a value — {"read":true}, not {"action":"read"}. '
       + `Known keys: ${[...KNOWN_KEYS].join(', ')}.`);
+    err.status = 400;
+    throw err;
+  }
+  // 🔴 Human-paced typing is mandatory (0.34.0). Refuse the old fast / fixed-delay modes
+  //    before anything runs — on either lane — rather than quietly downgrade them, and
+  //    before a goto or click in the same command has already acted.
+  if (cmd.type && typeof cmd.type === 'object' && (cmd.type.fast || cmd.type.delay != null)) {
+    const err = new Error(`type: ${cmd.type.fast ? '--fast' : 'delay'} is no longer available — every keystroke `
+      + 'is human-paced (50–150ms, tightened for long text). Send the same command without it.');
     err.status = 400;
     throw err;
   }
@@ -1637,7 +1705,7 @@ async function act(cmd) {
     }
     // 🔵 A person moves and scrolls before acting; a bot clicks the instant the DOM exists.
     //    Failure here never fails the goto — the page loaded — but it is reported, not hidden.
-    if (human.enabled()) {
+    {
       try {
         const y0 = await page.evaluate(() => scrollY);
         await human.warmUp(page, await viewportOf(page), pageMouse(page));
@@ -1666,7 +1734,7 @@ async function act(cmd) {
         if (await loc.count() === 0) continue;
         if (!(await loc.isVisible().catch(() => false))) continue;
         await loc.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
-        await loc.click({ timeout: 8000 });
+        await humanClick(page, loc, 8000);
         clickedWith = `${strat.kind}:${strat.value}`;
         break;
       } catch { /* try the next strategy */ }
@@ -1831,37 +1899,7 @@ async function act(cmd) {
     //    9989ms`. click() does its own scrolling, so a shorter, non-fatal pre-scroll is
     //    a nicety, not a gate — swallow its failure and let click() try.
     await el.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
-    let how = '';
-    if (human.enabled()) {
-      // 🔵 Let playwright do its actionability checks (visible, stable, not covered) without
-      //    clicking, then travel there along a curve and press like a hand would (human.js).
-      await el.click({ trial: true, timeout: 10000 });
-      const box = await el.boundingBox();
-      // 🔴 trial checked the CENTRE; a random point elsewhere can fall in the gap of a wrapped
-      //    link or under a badge covering part of the box. Only aim at a point the element
-      //    itself (or its child) would receive; if none of a few picks qualifies, use the
-      //    centre trial already vetted.
-      let aim = null;
-      if (box && box.width >= 1 && box.height >= 1) {
-        for (let i = 0; i < 5 && !aim; i += 1) {
-          const p = human.pointIn(box);
-          const hits = await el.evaluate((n, q) => {
-            const h = document.elementFromPoint(q.x, q.y); return !!h && (h === n || n.contains(h));
-          }, p).catch(() => false);
-          if (hits) aim = p;
-        }
-        if (!aim) aim = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
-      }
-      if (aim) {
-        await human.clickAlong(page, await viewportOf(page), aim, pageMouse(page));
-      } else {
-        // 🔴 No box to aim at (zero-size hit target). Click it the direct way and SAY so.
-        await el.click({ timeout: 10000 });
-        how = ' (direct: no box to aim at)';
-      }
-    } else {
-      await el.click({ timeout: 10000 });
-    }
+    await humanClick(page, el);
     let what = cmd.click;
     try {
       const d = await Promise.race([
@@ -1875,7 +1913,7 @@ async function act(cmd) {
       ]);
       if (d) what = `${cmd.click} -> ${d}`;
     } catch { /* describing it is a nicety; the click already happened */ }
-    done.push(`click ${what}${how}`);
+    done.push(`click ${what}`);
   }
   if (cmd.type) {
     // 🔴 Type like a person by default: focus the field, then send real keystrokes.
@@ -1888,37 +1926,13 @@ async function act(cmd) {
     //    as the site rebuilt the field around a link preview. The command reported
     //    success both times.
     //
-    //    🔵 fill is still available as {"fast": true} for large text in stable fields,
-    //    where keystroke-by-keystroke is slow and nothing is listening. It is opt-in on
-    //    purpose: a fast default that quietly drops text is worse than a slow one.
-    const { selector, text, fast, delay } = cmd.type;
+    //    🔴 0.34.0: no fast/fixed-delay variant any more (refused at the top of act()).
+    const { selector, text } = cmd.type;
     await requireMatch(page, selector, 'type');
-    if (fast) {
-      await page.fill(selector, text, { timeout: 10000 });
-    } else {
-      const field = page.locator(selector).first();
-      // 🔴 Scroll it into view and focus it — do not click. A field below the fold is
-      //    perfectly typeable but not clickable, and click() then times out on something
-      //    that was never broken. Measured 2026-08-25: an input at y=972 in an 805px
-      //    viewport failed this way.
-      await field.scrollIntoViewIfNeeded({ timeout: 10000 });
-      await field.focus({ timeout: 10000 });
-      // 🔵 Clear what is there first — fill's one useful habit, which typing lacks.
-      //    Skip it for contenteditable, where selectAll+delete is the working idiom.
-      try {
-        await field.fill('', { timeout: 3000 });
-      } catch { /* contenteditable and friends refuse fill; carry on and append */ }
-      if (delay != null || !human.enabled()) {
-        await field.pressSequentially(text, { delay: Number(delay) || 25, timeout: 30000 });
-      } else {
-        // 🔵 Uneven spacing, 50–150ms per key (human.js) — an even beat is a bot tell.
-        const str = String(text);
-        for (const ch of str) { await page.keyboard.type(ch); await human.sleep(human.keyDelay(str.length)); }
-        if (human.tightened(str.length)) done.push('long text: keys spaced closer to finish in ~30s');
-      }
-    }
+    const note = await humanType(page, page.locator(selector).first(), text);
+    if (note) done.push(note);
     // 🔵 Never log what was typed — it may be a password.
-    done.push(`type -> ${selector}${fast ? ' (fast)' : ''}`);
+    done.push(`type -> ${selector}`);
   }
   if (cmd.press) {
     // 🔴 Accept Control+a as well as Control+A. Playwright wants the exact key name, so
@@ -1927,7 +1941,9 @@ async function act(cmd) {
     //    a single character instead of the field.
     const keys = String(cmd.press).split('+');
     const norm = keys.map((k, i) => (i === keys.length - 1 && k.length === 1 ? k.toUpperCase() : k)).join('+');
-    await page.keyboard.press(norm);
+    // 🔵 Human timing here too: a beat before, and the key held 40–120ms (human.js).
+    await human.sleep(human.keyDelay());
+    await page.keyboard.press(norm, { delay: human.holdDelay() });
     done.push(`press ${norm}`);
   }
 

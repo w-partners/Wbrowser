@@ -5,6 +5,34 @@ has the detail.
 
 ---
 
+## 0.34.0 — 2026-11-13
+
+### Human-shaped input is no longer optional
+⚠️ Breaking: options that bypassed it are gone.
+- `WBROWSER_HUMAN` and `WBROWSER_MOBILE` no longer exist. Curved clicks, uneven typing,
+  the after-`go` warm-up and the phone on `m.` sites are always on.
+- `type --fast` and a fixed `delay` are refused with 400 and a reason, before anything in
+  the command runs, instead of being quietly accepted. Send the command without them.
+- Login autofill and the "Sign in with Google" button now click and type through the same
+  human paths; they used to set values in one shot and click instantly.
+- `press` waits a human beat and holds the key 40–120ms, on both lanes.
+- A login autofill whose submit button cannot be clicked now says `submit not clicked: …`
+  (and audits `submit-failed`) instead of reporting a submit that never happened.
+- Clearing a field before typing is done with keys (select-all, Backspace), not by setting
+  its value.
+- An element with no box to aim at (zero-size) is reported as not clickable instead of
+  being clicked the direct way.
+
+### Fixed
+- `wb status` no longer leaves a `chrome://version` tab behind each time it runs. When the
+  launch record did not describe the attached Chrome, the profile lookup opened that page in
+  a new tab and never closed it — one machine had 73 of them. The engine's own profile probe
+  now also closes its tab when loading it times out.
+- `wb login` exits with an error when the fields were filled but the sign-in click failed,
+  instead of printing ✅. A `go` that triggers autofill prints the same failure.
+
+---
+
 ## 0.33.0 — 2026-11-10
 
 ### Input that moves like a person, by default
