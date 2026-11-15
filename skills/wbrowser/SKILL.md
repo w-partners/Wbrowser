@@ -130,11 +130,27 @@ wb type '<selector>' 'the text'
 (`= 'text'` or `(empty)`), so verifying is one command, not a hand-written `eval`.
 
 🔴 **Input is always human-paced — there is no off switch.** Clicks travel a curved path and are held briefly;
-keys are 50–150ms apart at random; `go` is followed by a small pointer drift and scroll. So
+keys are 35–140ms apart at random, with pauses and the odd backspaced slip; `go` is followed by a small pointer drift and scroll. So
 a click takes about half a second and 100 characters take about 10 seconds — that is
 expected, not a hang. A `go` to an `m.` host presents the tab as a phone; other hosts turn
 it back. Outbound IP comes from `WBROWSER_PROXY` if set at Chrome start (`wb status` shows
 it). `type --fast` and a fixed `delay` are refused with 400; send the command without them.
+`type` checks the field afterwards (Hangul included); a 422 means it still did not hold the
+text after one retype — read the field, do not just resend. Off-screen elements are reached
+with the wheel; a minimized window is refused with 409 (restore it).
+
+🔴 **`reconnect: true` means stop.** A captcha, a second-factor code or a block notice is
+on screen; nothing more was clicked or typed. Tell the person and wait until they have
+finished it in that tab. Do not try to solve it, do not log in again, do not retry in a
+loop — that is how accounts get locked. `challenge.kind: "login-expired"` is the same: the
+login form came back after an automatic login.
+
+🔵 **`--idem <key>` for anything that must happen once** (a post, an order, a message):
+`wb --idem post-2026-11-16-1 click '#submit'`. Resent after a timeout, it returns the first
+reply instead of clicking again. A 409 saying the result is unknown means check the site by
+hand; if it did not happen, `POST /idem/forget {"key": …}` and send again. It works with
+go, read, click, type, press, console, errors, network, eval, collect and video; on other
+commands (`login`, `take`, `shot`, …) the CLI refuses it rather than ignore it.
 
 ## 🔴 Before anything irreversible
 

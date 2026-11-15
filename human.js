@@ -3,7 +3,7 @@
 // 🔴 Bot defences score the input stream, not the request: a pointer that
 //    teleports to a button in 0ms, keys at a perfectly even interval, a click with no scroll or
 //    movement before it — each is a tell. So by default every click travels a curved path with
-//    easing and jitter, every key waits a random 50–150ms, and a page gets a little scroll and
+//    easing and jitter, every key waits a random 35–140ms, and a page gets a little scroll and
 //    pointer movement after it loads.
 // 🔵 Both the playwright path (engine.js) and the raw-CDP fallback (rawcdp.js) draw from here,
 //    so the two never drift into different "humans".
@@ -11,18 +11,39 @@
 
 const rand = (a, b) => a + Math.random() * (b - a);
 
-// Per-key delay, 50–150ms — the range a typing person actually shows.
+// Per-key delay, 35–140ms — the range a typing person actually shows.
 // 🔴 For long text the spacing tightens so the whole string fits in ~30s: at 100ms a key, 900+
 //    characters outlast the client's 90s request limit, the caller sees a cut-off reply while
 //    the engine keeps typing, and the next command races it into the same field. Still uneven.
 const TYPE_BUDGET_MS = 30000;
+const KEY_MEAN = 87.5;                 // × 0.4–1.6 → 35–140ms
 const keyDelay = (len = 0) => {
-  const mean = Math.min(100, TYPE_BUDGET_MS / Math.max(1, len));
-  return Math.max(1, Math.round(mean * rand(0.5, 1.5)));
+  const mean = Math.min(KEY_MEAN, TYPE_BUDGET_MS / Math.max(1, len));
+  return Math.max(1, Math.round(mean * rand(0.4, 1.6)));
+};
+// Extra wait after a character: people stop at the end of a sentence and breathe at a comma.
+// 🔴 Not under a tightened budget — long text has no room for it.
+const pauseAfter = (ch, len = 0) => {
+  if (tightened(len)) return 0;
+  if (/[.!?。…\n]/.test(ch)) return Math.round(rand(250, 700));
+  if (/[,，、;]/.test(ch)) return Math.round(rand(80, 250));
+  return 0;
+};
+// Now and then a person hits a neighbouring key and backspaces it. Returns the wrong key to
+// type first, or null. Only for latin letters (a wrong key next to a Hangul syllable is not a
+// keyboard neighbour), never under a tightened budget.
+const NEAR = { a: 'sq', b: 'vn', c: 'xv', d: 'sf', e: 'wr', f: 'dg', g: 'fh', h: 'gj', i: 'uo', j: 'hk', k: 'jl', l: 'k', m: 'n', n: 'bm', o: 'ip', p: 'o', q: 'w', r: 'et', s: 'ad', t: 'ry', u: 'yi', v: 'cb', w: 'qe', x: 'zc', y: 'tu', z: 'x' };
+const TYPO_RATE = 0.02;
+const typoFor = (ch, len = 0) => {
+  if (tightened(len) || Math.random() >= TYPO_RATE) return null;
+  const n = NEAR[ch.toLowerCase()];
+  if (!n) return null;
+  const w = n[Math.floor(Math.random() * n.length)];
+  return ch === ch.toUpperCase() ? w.toUpperCase() : w;
 };
 // How long a key is held down, 40–120ms.
 const holdDelay = () => Math.round(rand(40, 120));
-const tightened = (len) => TYPE_BUDGET_MS / Math.max(1, len) < 100;
+const tightened = (len) => TYPE_BUDGET_MS / Math.max(1, len) < KEY_MEAN;
 
 // A point inside the middle half of a box — people do not hit the exact centre, but they do
 // not hit the edge either (edges can belong to a neighbouring element).
@@ -69,7 +90,7 @@ async function clickAlong(key, viewport, target, { move, down, up }) {
   where.set(key, target);
   await sleep(rand(60, 180));          // aim, then press
   await down(target.x, target.y);
-  await sleep(rand(40, 120));          // hold
+  await sleep(rand(50, 130));          // hold
   await up(target.x, target.y);
 }
 
@@ -86,4 +107,4 @@ async function warmUp(key, viewport, { move, wheel }) {
   await sleep(rand(100, 300));
 }
 
-module.exports = { keyDelay, holdDelay, tightened, pointIn, mousePath, clickAlong, warmUp, sleep };
+module.exports = { keyDelay, holdDelay, tightened, pauseAfter, typoFor, pointIn, mousePath, clickAlong, warmUp, sleep, rand };

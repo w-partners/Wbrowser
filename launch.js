@@ -389,6 +389,19 @@ if (require.main !== module) return;
     } else if (PROXY) {
       console.log(`proxy       ${PROXY}`);
     }
+    // 🔴 Same for WBROWSER_LANG — --lang is read only at startup.
+    const wantLang = (process.env.WBROWSER_LANG || '').trim() || null;
+    let ranLang;
+    try { ranLang = JSON.parse(fs.readFileSync(path.join(stateDir(), 'runtime.json'), 'utf8')).lang; } catch { ranLang = undefined; }
+    if (wantLang && ranLang === undefined) {
+      console.log(`🔴 language: unknown — this Chrome was not started with a recorded language, so ${wantLang} may not apply.`);
+      console.log('   Chrome reads the language only at startup — stop it and start again to be sure.');
+    } else if (wantLang && wantLang !== ranLang) {
+      console.log(`🔴 language: this Chrome runs with ${ranLang || "the system's language"}, you asked for ${wantLang}.`);
+      console.log('   Chrome reads the language only at startup — stop it and start again to change it.');
+    } else if (wantLang) {
+      console.log(`language    ${wantLang}`);
+    }
     const gap = await autoplayGap();
     if (gap) {
       console.log('');
@@ -558,6 +571,17 @@ if (require.main !== module) return;
     //    gesture requirement; it grants no other capability.
     '--autoplay-policy=no-user-gesture-required',
   ];
+  // 🔵 WBROWSER_LANG pins the UI language and Accept-Language, so every run of this profile
+  //    presents the same locale (e.g. ko-KR). Unset → Chrome's own choice, from the system.
+  const LANG = (process.env.WBROWSER_LANG || '').trim();
+  if (LANG) {
+    if (!/^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/.test(LANG)) {
+      console.error(`WBROWSER_LANG="${LANG}" is not a language tag (e.g. ko-KR) — not launching.`);
+      process.exit(1);
+    }
+    args.push(`--lang=${LANG}`, `--accept-lang=${LANG},${LANG.split('-')[0]}`);
+    console.log(`language    ${LANG}`);
+  }
   if (PROXY) {
     args.push(`--proxy-server=${PROXY}`);
     // 🔴 Without this, WebRTC can still reveal the real IP around the proxy.
@@ -571,6 +595,11 @@ if (require.main !== module) return;
     args.push('--headless=new');
     if (process.getuid && process.getuid() === 0) args.push('--no-sandbox');
     console.log('🔵 No display (DISPLAY) found, launching headless.');
+    // 🔴 Say what this costs: with no GPU, WebGL renders in software (SwiftShader) and any
+    //    site can read that from the renderer string. The engine does not fake it — a made-up
+    //    GPU is a tell of its own. A headed Chrome on a real GPU is the fix.
+    console.log('🟡 Headless: WebGL renders in software (SwiftShader), which sites can read. For a real-GPU');
+    console.log('   fingerprint run Chrome headed on a machine with a GPU (e.g. Windows Chrome from WSL).');
     console.log('   If this happens even though you have a display, turn it off with WBROWSER_HEADLESS=0.');
   } else {
     args.push('--window-name=🤖 Wbrowser');
@@ -663,6 +692,7 @@ if (require.main !== module) return;
       cdpPort: Number(CDP_PORT),
       headless: wantHeadless,
       proxy: PROXY || null,
+      lang: (process.env.WBROWSER_LANG || '').trim() || null,
       chrome: CHROME,
       browser: v.Browser,
       startedAt: new Date().toISOString(),

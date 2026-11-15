@@ -21,6 +21,14 @@
 //     ]
 //   }
 //
+//   Pacing (0.35.0 — on by default):
+//     "jitterMinutes": 10,      // start 0–10 min after the scheduled minute, never on the dot (0 = off)
+//     "dwellSeconds": [30, 60], // after each goto, stay this long before the next step (0 = off)
+//     "dailyMax": 3,            // at most this many runs a day; more are skipped and logged
+//     "verifyUrl": "https://example.com/p/1",  // after the run, fetch this with NO login …
+//     "verifyText": "my title", //   … and require this text in it (optional)
+//   🔵 Jobs never run at the same time: the daemon runs them one after another.
+//
 // 🔴 About irreversible actions
 //    Unattended execution means "nobody is watching when it goes wrong". So clicks that
 //    look like submit/pay/delete are **blocked by default**. If you really need one, the
@@ -41,6 +49,49 @@ const { classify } = require('./sensitiveaction');
 const ENGINE = process.env.WBROWSER_ENGINE || 'http://127.0.0.1:7981';
 const JOBS_DIR = process.env.WBROWSER_JOBS || path.join(__dirname, 'jobs');
 const AGENT = process.env.WBROWSER_AGENT || 'cron';
+const RUNS_FILE = process.env.WBROWSER_CRON_RUNS || path.join(require('os').homedir(), '.wbrowser', 'cron-runs.json');
+const rand = (a, b) => a + Math.random() * (b - a);
+const sleep = (ms) => new Promise((r) => { setTimeout(r, ms); });
+const today = () => new Date().toLocaleDateString('sv');      // YYYY-MM-DD, local
+
+// How many times each job ran per day — for dailyMax. Old days are dropped.
+// 🔴 A missing file is "no runs yet"; an unreadable one stops the job — reading it as 0
+//    would quietly lift every dailyMax.
+function loadRuns() {
+  let raw;
+  try { raw = fs.readFileSync(RUNS_FILE, 'utf8'); } catch (e) { if (e.code === 'ENOENT') return {}; throw e; }
+  try { return JSON.parse(raw); } catch {
+    throw new Error(`${RUNS_FILE} is not valid JSON — not running jobs with dailyMax until it is fixed or removed`);
+  }
+}
+function runsToday(name) {
+  return (loadRuns()[today()] || {})[name] || 0;
+}
+function countRun(name) {
+  let db = loadRuns();
+  const d = today();
+  db = { [d]: { ...(db[d] || {}), [name]: ((db[d] || {})[name] || 0) + 1 } };
+  fs.mkdirSync(path.dirname(RUNS_FILE), { recursive: true });
+  fs.writeFileSync(RUNS_FILE, JSON.stringify(db));
+}
+const dwellRange = (job) => {
+  const d = job.dwellSeconds == null ? [30, 60] : job.dwellSeconds;
+  if (!d) return null;
+  return Array.isArray(d) ? d : [d, d];
+};
+
+// 🔴 Judge the result from outside, not from the screen we just drove: fetch with no cookies
+//    and no login. A post that "succeeded" on our screen but is not public fails here.
+async function verifyOutside(job) {
+  if (!job.verifyUrl) return null;
+  try {
+    const r = await fetch(job.verifyUrl, { redirect: 'follow', signal: AbortSignal.timeout(20000) });
+    const body = await r.text();
+    if (!r.ok) return `external check: ${job.verifyUrl} answered ${r.status} without a login`;
+    if (job.verifyText && !body.includes(job.verifyText)) return `external check: "${job.verifyText}" is not on ${job.verifyUrl} without a login`;
+    return 'ok';
+  } catch (e) { return `external check: could not fetch ${job.verifyUrl}: ${e.message}`; }
+}
 
 // 🔵 click/selector risk is now judged by the shared classifier (sensitiveaction.js) — see
 //    riskyReason(). This regex remains ONLY for scanning eval CODE, which is not a button the
@@ -168,7 +219,15 @@ function riskyReason(step) {
   return null;
 }
 
-async function runJob(job, { dryRun = false } = {}) {
+// 🔴 A run counts toward dailyMax once a step has gone through. One stopped at its first step
+//    (a captcha, an error) did nothing on the site, so the person who fixes it can run it again.
+async function runJob(job, opts = {}) {
+  const out = await runSteps(job, opts);
+  if (!opts.dryRun && job.dailyMax && !out.skipped && (out.ok || out.acted)) countRun(job.name);
+  return out;
+}
+
+async function runSteps(job, { dryRun = false } = {}) {
   const started = new Date();
   const results = [];
   console.log(`▶ ${job.name} — ${started.toLocaleString()}`);
@@ -177,15 +236,24 @@ async function runJob(job, { dryRun = false } = {}) {
     console.error('  ❌ steps is empty');
     return { ok: false, why: 'no steps' };
   }
+  if (!dryRun && job.dailyMax && runsToday(job.name) >= job.dailyMax) {
+    // 🔴 Skipped, and said so — a cap that silently swallows runs looks like a broken schedule.
+    console.error(`  ⏭ skipped — already ran ${runsToday(job.name)} time(s) today (dailyMax ${job.dailyMax})`);
+    return { ok: false, why: 'dailyMax reached', skipped: true };
+  }
 
+  // 🔴 Once an input step has been sent the site may have changed, however the step ended
+  //    (an error after its click, a 422 on its typing, no reply) — that run counts.
+  let acted = false;
   for (let i = 0; i < job.steps.length; i += 1) {
     const step = job.steps[i];
+    const inputStep = ['click', 'type', 'press', 'eval', 'googleLogin'].some((k) => step[k] != null);
     const risk = riskyReason(step);
     if (risk && !job.allowIrreversible) {
       // 🔴 Don't skip it silently. Record why we stopped and abort the whole job.
       console.error(`  ⛔ step ${i + 1} blocked — looks irreversible (${risk})`);
       console.error('     If this is intended, add "allowIrreversible": true to the job file.');
-      return { ok: false, why: `risky action blocked: ${risk}`, stopped: i + 1, results };
+      return { ok: false, why: `risky action blocked: ${risk}`, acted, stopped: i + 1, results };
     }
     if (dryRun) {
       console.log(`  · step ${i + 1} (dry run): ${JSON.stringify(step).slice(0, 90)}`);
@@ -203,23 +271,40 @@ async function runJob(job, { dryRun = false } = {}) {
       });
       if (r.error) {
         console.error(`  ❌ step ${i + 1} failed: ${r.error}`);
-        return { ok: false, why: r.error, stopped: i + 1, results };
+        return { ok: false, why: r.error, acted: acted || inputStep, stopped: i + 1, results };
+      }
+      // 🔴 The page wants a person — stop the whole job; never push on or retry.
+      if (r.reconnect) {
+        const c = r.challenge || {};
+        console.error(`  🔴 step ${i + 1}: needs a person (${c.kind}): ${c.reason} — ${c.url || ''}`);
+        console.error('     reconnect: true — the job stopped here. Finish it by hand, then run the job again.');
+        // A click or keystroke may already have gone through before the page asked — count it.
+        acted = acted || (r.done || []).some((s) => (/^(click|type|press|google-login) /.test(s) || s === 'eval' || s === 'eval(failed)'));
+        return { ok: false, why: `needs a person: ${c.reason}`, reconnect: true, acted, stopped: i + 1, results };
       }
       // Drop the base64 screenshot from the result — it would make logs several MB
       const { screenshot_b64: shot, ...rest } = r;
       if (shot) rest.screenshot = `(${Math.round(shot.length * 0.75 / 1024)}KB)`;
       results.push(rest);
+      acted = acted || inputStep;
       const done = (r.done || []).join(', ');
       const val = r.result !== undefined ? ` → ${JSON.stringify(r.result).slice(0, 80)}` : '';
       console.log(`  ✅ step ${i + 1}: ${done}${val}`);
+      const dw = step.goto && i < job.steps.length - 1 ? dwellRange(job) : null;
+      if (dw) await sleep(rand(dw[0], dw[1]) * 1000);
     } catch (e) {
       console.error(`  ❌ step ${i + 1} error: ${e.message}`);
-      return { ok: false, why: e.message, stopped: i + 1, results };
+      return { ok: false, why: e.message, acted: acted || inputStep, stopped: i + 1, results };
     }
   }
 
   const secs = ((Date.now() - started.getTime()) / 1000).toFixed(1);
-  console.log(`  done (${secs}s)`);
+  const v = dryRun ? null : await verifyOutside(job);
+  if (v && v !== 'ok') {
+    console.error(`  ❌ ${v} (${secs}s)`);
+    return { ok: false, why: v, acted, results };
+  }
+  console.log(`  done (${secs}s)${v ? ' · checked from outside' : ''}`);
   return { ok: true, results };
 }
 
@@ -277,14 +362,21 @@ async function main() {
     console.log(`wbrowser cron — watching ${jobs.filter((j) => j._cron).length} job(s)`);
 
     let lastMinute = -1;
-    setInterval(async () => {
+    // 🔵 One queue: a job never starts while another is running (no two accounts at once).
+    let queue = Promise.resolve();
+    setInterval(() => {
       const now = new Date();
       // Never fire twice within the same minute (safe even if several ticks land)
       if (now.getMinutes() === lastMinute) return;
       lastMinute = now.getMinutes();
       for (const j of jobs) {
         if (!j._cron || !matches(j._cron, now)) continue;
-        try { await runJob(j); } catch (e) { console.error(`❌ ${j.name}: ${e.message}`); }
+        // 🔵 Not on the dot: a random 0–jitterMinutes delay before it joins the queue.
+        const jit = (j.jitterMinutes == null ? 10 : Number(j.jitterMinutes) || 0) * 60000 * Math.random();
+        console.log(`· ${j.name} due — starts in ${Math.round(jit / 1000)}s (jitter)`);
+        setTimeout(() => {
+          queue = queue.then(() => runJob(j)).catch((e) => { console.error(`❌ ${j.name}: ${e.message}`); });
+        }, jit);
       }
     }, 20000);   // check every 20s — so a minute boundary is never missed
     return new Promise(() => {});   // stay alive

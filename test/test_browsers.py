@@ -467,3 +467,12 @@ def test_rawcdp_fallback_is_a_complete_path_not_read_only():
     assert "raw.type(" in fb, "actViaRawCDP does not route cmd.type to raw CDP"
     # a non-navigating command on no tab still fails honestly (does not conjure a blank tab)
     assert "throw e;" in fb, "a fallback eval/read with no tab must still error, not open a blank"
+
+
+def test_a_name_cannot_share_or_escape_a_profile_folder(tmp_path):
+    # The name is the profile folder. "Work" beside "work" is one folder on a
+    # case-insensitive disk, and a path in the name lands in someone else's folder.
+    assert run(tmp_path, "add", "work").returncode == 0
+    for bad in ("Work", "a/../work", "../work", "my work", ""):
+        assert run(tmp_path, "add", bad).returncode != 0, bad
+    assert run(tmp_path, "add", "work-2").returncode == 0

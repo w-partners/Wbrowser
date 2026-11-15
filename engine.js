@@ -28,6 +28,8 @@ const credaudit = require('./credaudit');
 const sitememory = require('./sitememory');
 const human = require('./human');
 const identity = require('./identity');
+const challenge = require('./challenge');
+const idem = require('./idem');
 
 // Transport for human.js on the playwright path. connectOverCDP pages have no fixed viewport
 // (viewportSize() is null), so ask the page.
@@ -42,7 +44,52 @@ const viewportOf = (page) => page.evaluate(() => ({ width: innerWidth, height: i
 // 🔴 Every click and every keystroke the engine makes goes through these two — commands,
 //    login autofill, "Sign in with Google" alike. Human-shaped input is not optional
 //    (0.34.0): there is no switch that turns it off, so no path can quietly bypass it.
-async function humanClick(page, el, timeout = 10000) {
+// 🔴 Input goes only to a tab a person could see. A background tab gets its timers throttled
+//    and a minimized window can drop input, so: if hidden, bring the tab forward once; still
+//    hidden (window minimized) → refuse rather than type into nowhere.
+async function ensureVisible(page) {
+  const vis = () => page.evaluate(() => document.visibilityState).catch(() => 'unknown');
+  if (await vis() !== 'hidden') return;
+  await page.bringToFront();
+  await human.sleep(human.rand(150, 350));
+  if (await vis() === 'hidden') {
+    const err = new Error('the tab is not visible (is the window minimized?) — input to a hidden tab can be throttled or lost. Restore the window and run the command again.');
+    err.status = 409;
+    throw err;
+  }
+}
+
+// 🔴 Bring an off-screen element into view the way a hand does — with the wheel — instead of
+//    a programmatic jump. Returns true once it is in view, false if the wheel cannot move it
+//    (a nested scroller elsewhere, a fixed element); the caller then scrolls programmatically
+//    and says so.
+async function wheelIntoView(page, el) {
+  const vp = await viewportOf(page);
+  for (let i = 0; i < 30; i += 1) {
+    const b = await el.boundingBox();
+    if (!b) return false;
+    const h = Math.min(b.height, vp.height * 0.6);
+    if (b.y >= 0 && b.y + h <= vp.height) return true;
+    const want = (b.y + h / 2) - vp.height * human.rand(0.35, 0.6);
+    const dy = Math.sign(want) * Math.min(Math.abs(want), human.rand(220, 420));
+    await page.mouse.wheel(0, dy);
+    await human.sleep(human.rand(70, 180));
+    const a = await el.boundingBox();
+    if (!a || Math.abs(a.y - b.y) < 1) return false;
+  }
+  return false;
+}
+async function bringIntoView(page, el) {
+  if (await wheelIntoView(page, el)) return null;
+  await el.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
+  return 'scrolled into view without the wheel (the wheel did not move it)';
+}
+
+// `onInput` runs right before the first event that can change the page — the trial and the
+// scroll before it can fail without anything pressed (idem: see `acted`).
+async function humanClick(page, el, timeout = 10000, onInput) {
+  await ensureVisible(page);
+  const scrolled = await bringIntoView(page, el);
   // Let playwright do its actionability checks (visible, stable, not covered) without
   // clicking, then travel there along a curve and press like a hand would (human.js).
   await el.click({ trial: true, timeout });
@@ -63,28 +110,109 @@ async function humanClick(page, el, timeout = 10000) {
     if (hits) aim = p;
   }
   if (!aim) aim = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  if (onInput) onInput();
   await human.clickAlong(page, await viewportOf(page), aim, pageMouse(page));
+  return scrolled;
 }
+
+// 🔴 Compare what the field holds with what was meant — Hangul composed through an IME can
+//    arrive split (ㅎㅏㄴ) or short a syllable, and the command used to report success either
+//    way. NFC on both sides, otherwise exact — a dropped space or hyphen is a different text.
+//    An input mask that adds its own (010-1234) shows the same both ways and is said, not failed.
+//    A rich editor renders its own whitespace (nbsp, line breaks): there spacing is collapsed
+//    and the text only has to be in it.
+// null = could not read it (the field is gone, the page moved on) — never the same as empty.
+const fieldText = (field) => field.evaluate((n) => (('value' in n) ? n.value : n.innerText || ''), null, { timeout: 3000 }).catch(() => null);
+const unreadable = () => {
+  const err = new Error('type: the field could not be read back after typing (it is gone or the page changed) — not retyped, and nothing after it in this command ran.');
+  err.status = 422;
+  return err;
+};
+const nfc = (t) => String(t || '').normalize('NFC');
+const spaced = (t) => nfc(t).replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
+const holds = (got, want, rich) => (rich ? spaced(got).includes(spaced(want)) : nfc(got) === nfc(want));
 
 // Focus, clear with keys (select-all + Backspace, as a person would), then type with human
 // spacing. Returns a note when long text forced tighter spacing.
-async function humanType(page, field, text) {
-  // 🔴 Scroll it into view and focus it — do not click. A field below the fold is
+async function humanType(page, field, text, onInput) {
+  await ensureVisible(page);
+  // 🔴 Bring it into view and focus it — do not click. A field below the fold is
   //    perfectly typeable but not clickable, and click() then times out on something
   //    that was never broken. Measured 2026-08-25: an input at y=972 in an 805px
   //    viewport failed this way.
-  await field.scrollIntoViewIfNeeded({ timeout: 10000 });
+  const notes = [];
+  const scrolled = await bringIntoView(page, field);
+  if (scrolled) notes.push(scrolled);
   await field.focus({ timeout: 10000 });
-  const has = await field.evaluate((n) => (('value' in n) ? n.value : n.textContent || '').length > 0).catch(() => true);
-  if (has) {
+  // 🔵 Typos only where free text goes: a slip in a number/email/tel/url field can be refused
+  //    by the field, and the Backspace then eats a character that was right.
+  const kind = await field.evaluate((n) => ({
+    secret: n.type === 'password',
+    rich: !('value' in n),
+    plain: !('value' in n) || n.tagName === 'TEXTAREA' || ['text', 'search', ''].includes((n.getAttribute('type') || '').toLowerCase()),
+    maxLength: n.maxLength > 0 ? n.maxLength : 0,
+  })).catch(() => ({ secret: true, rich: false, plain: false, maxLength: 0 }));
+  const clear = async () => {
+    const has = await field.evaluate((n) => (('value' in n) ? n.value : n.textContent || '').length > 0).catch(() => true);
+    if (!has) return;
     await page.keyboard.press('ControlOrMeta+A');
     await human.sleep(human.keyDelay());
     await page.keyboard.press('Backspace');
     await human.sleep(human.keyDelay());
-  }
+  };
+  if (onInput) onInput();                          // clearing with keys already changes the field
+  await clear();
   const str = String(text == null ? '' : text);
-  for (const ch of str) { await page.keyboard.type(ch); await human.sleep(human.keyDelay(str.length)); }
-  return human.tightened(str.length) ? 'long text: keys spaced closer to finish in ~30s' : null;
+  for (const ch of str) {
+    // Now and then a neighbouring key, noticed and backspaced — never in a password field.
+    // Not in a maxlength field either: a full field refuses the slip, and the Backspace
+    // then eats a character that was right.
+    const typo = kind.secret || !kind.plain || kind.maxLength ? null : human.typoFor(ch, str.length);
+    if (typo) {
+      await page.keyboard.type(typo);
+      await human.sleep(human.rand(120, 350));
+      await page.keyboard.press('Backspace');
+      await human.sleep(human.keyDelay(str.length));
+    }
+    await page.keyboard.type(ch);
+    await human.sleep(human.keyDelay(str.length) + human.pauseAfter(ch, str.length));
+  }
+  if (human.tightened(str.length)) notes.push('long text: keys spaced closer to finish in ~30s');
+  // 🔴 Check it landed. One retry with text inserted straight into the field (no key events,
+  //    so no IME in the way), character by character at the same spacing; still wrong → fail,
+  //    so a press Enter later in the same command cannot submit the wrong text.
+  const first = await fieldText(field);
+  // 🔴 Unreadable is not "wrong": retyping would put the text into whatever has focus now.
+  if (first === null) throw unreadable();
+  // A maxlength field keeps only the first N characters — that is the field, not a failure.
+  if (kind.maxLength && !holds(first, str, kind.rich) && [...str].length > kind.maxLength
+      && holds(first, [...str].slice(0, kind.maxLength).join(''), kind.rich)) {
+    notes.push(`the field keeps at most ${kind.maxLength} characters — the rest was not taken`);
+  } else if (!holds(first, str, kind.rich)) {
+    await clear();
+    for (const ch of str) {
+      await page.keyboard.insertText(ch);
+      await human.sleep(human.keyDelay(str.length));
+    }
+    const got = await fieldText(field);
+    if (got === null) throw unreadable();
+    // 🔵 Same result both ways (keys, then no keys) → the page reformats what it is given
+    //    (upper-casing, a +82 or ₩ prefix). Said in the reply, not failed.
+    if (!holds(got, str, kind.rich) && nfc(got) === nfc(first)) {
+      // No lengths in a secret field — they would say how long the password is.
+      notes.push(kind.secret ? 'the page reformatted the text — same result typed with and without keys'
+        : `the page reformatted the text (the field shows ${[...nfc(got)].length} characters for ${[...nfc(str)].length} typed) — same result typed with and without keys`);
+      return notes.join('; ');
+    }
+    if (!holds(got, str, kind.rich)) {
+      // 🔵 No lengths here: on an automatic login this text is the stored password.
+      const err = new Error('type: the field does not hold what was typed, even after retyping without the IME. Nothing after it in this command ran.');
+      err.status = 422;
+      throw err;
+    }
+    notes.push('typed text did not match the first time (IME?) — retyped without key events and checked');
+  }
+  return notes.length ? notes.join('; ') : null;
 }
 const os = require('os');
 const path = require('path');
@@ -1134,7 +1262,7 @@ const KNOWN_KEYS = new Set([
   'console', 'errors', 'network', 'tab', 'account', 'agent', 'selector',
   'newtab', 'newwindow', 'fullPage', 'limit', 'filter',
   'noAutologin', 'scope', 'googleLogin', 'video', 'maxFrames',
-  'collect', 'count', 'days', 'out', 'whisper', 'noTranscript',
+  'collect', 'count', 'days', 'out', 'whisper', 'noTranscript', 'idem',
 ]);
 
 // 🔴 What is actually running here. Reported 2026-08-31: a fix was released, pulled,
@@ -1257,10 +1385,49 @@ async function actViaRawCDP(cmd, tab) {
         result.stampWarning = `tagging this tab failed: ${String(e.message || e).split('\n')[0]}`;
       }
     }
-    if (cmd.click) { await raw.click(cmd.click); done.push(`click ${cmd.click}`); }
-    if (cmd.type) { await raw.type(cmd.type.text != null ? cmd.type.text : cmd.type); done.push('type'); }
-    if (cmd.press) { await raw.press(cmd.press); done.push(`press ${cmd.press}`); }
-    if (cmd.eval) { result.result = await raw.evaluate(cmd.eval); done.push('eval'); }
+    // 🔴 Same stop rule as the main lane (challenge.js): a page wanting a person halts input.
+    const rawSnap = () => Promise.race([
+      raw.evaluate(challenge.SNAPSHOT_EXPR),
+      new Promise((res) => { setTimeout(() => res(null), 3000); }),
+    ]).catch(() => null);
+    const rawChallenge = async (after) => {
+      if (after) {
+        // Let a submit start loading what it leads to, then wait for that page (as the
+        // playwright lane's waitForLoadState does), up to 8s.
+        await human.sleep(600);
+        for (let t = 0; t < 16; t += 1) {
+          const st = await raw.evaluate('document.readyState').catch(() => 'loading');
+          if (st !== 'loading') break;
+          await human.sleep(500);
+        }
+      }
+      return challenge.check(rawSnap, (n) => done.push(n));
+    };
+    const rawInputs = !!(cmd.click || cmd.type || cmd.press);
+    let rawHalted = (rawInputs || cmd.goto || cmd.eval) ? await rawChallenge() : null;
+    const rawHalt = (c) => { result.reconnect = true; result.challenge = c; done.push(challenge.HANDOVER); };
+    if (rawHalted && !rawInputs && !cmd.eval) {
+      result.challenge = { ...rawHalted, stopped: false };
+      done.push(`note: ${rawHalted.reason} — clicking or typing here would stop for a person`);
+      rawHalted = null;
+    }
+    if (rawHalted) rawHalt(rawHalted);
+    if (rawInputs && !rawHalted) await raw.ensureVisible();
+    // idem (see `acted`): marked right before the first event — a click whose selector does not
+    // resolve has pressed nothing.
+    if (cmd.click && !rawHalted) { const n = await raw.click(cmd.click, () => acted.add(cmd)); done.push(`click ${cmd.click}`); if (n) done.push(n); }
+    if (cmd.type && !rawHalted) { acted.add(cmd); await raw.type(cmd.type.text != null ? cmd.type.text : cmd.type); done.push('type (not checked against the field on this lane)'); }
+    if (cmd.press && !rawHalted) { acted.add(cmd); await raw.press(cmd.press); done.push(`press ${cmd.press}`); }
+    if (rawInputs && !rawHalted) { rawHalted = await rawChallenge(true); if (rawHalted) rawHalt(rawHalted); }
+    // eval can click and submit as well as any input step, so it stops with them.
+    if (cmd.eval && rawHalted) done.push('eval not run — the page needs a person');
+    if (cmd.eval && !rawHalted) {
+      acted.add(cmd);
+      result.result = await raw.evaluate(cmd.eval);
+      done.push('eval');
+      rawHalted = await rawChallenge(true);          // it may have pressed a submit
+      if (rawHalted) rawHalt(rawHalted);
+    }
     if (cmd.collect) {
       // 🔴 The fallback used to IGNORE this key: it answered 200 with `done:["newtab"]` and
       //    no collect block, so `wb` printed "0 posts" and a user spent 20 minutes hunting a
@@ -1353,7 +1520,7 @@ async function actViaRawCDP(cmd, tab) {
     //    unsupported would be its own lie.
     {
       const OPTIONS = new Set(['tab', 'account', 'agent', 'selector', 'wait', 'limit', 'filter',
-        'fullPage', 'noAutologin', 'scope', 'count', 'days', 'out', 'maxFrames']);
+        'fullPage', 'noAutologin', 'scope', 'count', 'days', 'out', 'maxFrames', 'idem']);
       const HANDLED = new Set(['goto', 'newtab', 'newwindow', 'click', 'type', 'press', 'eval',
         'read', 'shot', 'collect']);
       const unhandled = Object.keys(cmd || {})
@@ -1382,7 +1549,7 @@ async function actViaRawCDP(cmd, tab) {
 // ONE place. 🔴 The secret goes value->field over CDP and is never returned. Field detection
 // REFUSES rather than guess (loginfields.choose throws). Submit is gated: confirmed once per
 // site, then remembered. Returns a plain result object; the caller shapes the HTTP reply.
-async function fillLogin(page, origin, entry, { confirmSubmit = false } = {}) {
+async function fillLogin(page, origin, entry, { confirmSubmit = false, onInput } = {}) {
   const candidates = await page.evaluate(() => {
     const out = []; let n = 0;
     const push = (el, tag) => {
@@ -1412,9 +1579,11 @@ async function fillLogin(page, origin, entry, { confirmSubmit = false } = {}) {
     });
     return { error: e.message, status: 422 };
   }
+  const typeNotes = [];                            // maxlength cut / reformatted — said, not dropped
   const typeInto = async (ref, value) => {
     if (!ref) return;
-    await humanType(page, page.locator(`[data-wb-ref="${ref}"]`).first(), value);
+    const n = await humanType(page, page.locator(`[data-wb-ref="${ref}"]`).first(), value, onInput);
+    if (n) typeNotes.push(n);
   };
   if (picked.username && entry.username) await typeInto(picked.username, entry.username);
   await typeInto(picked.password, entry.password);
@@ -1430,7 +1599,7 @@ async function fillLogin(page, origin, entry, { confirmSubmit = false } = {}) {
     // 🔴 Only claim (and audit) a submit that happened. A swallowed click failure used to be
     //    recorded as submitted — a success report for a click that never landed.
     try {
-      await humanClick(page, page.locator(`[data-wb-ref="${picked.submit}"]`).first());
+      await humanClick(page, page.locator(`[data-wb-ref="${picked.submit}"]`).first(), undefined, onInput);
       submitted = true;
       credaudit.append(CRED_AUDIT_FILE, { ts: new Date().toISOString(), action: 'submit', origin });
     } catch (e) {
@@ -1438,7 +1607,7 @@ async function fillLogin(page, origin, entry, { confirmSubmit = false } = {}) {
       credaudit.append(CRED_AUDIT_FILE, { ts: new Date().toISOString(), action: 'submit-failed', origin, note: submitError });
     }
   }
-  return { ok: true, filled: true, submitted, submitError, needsConfirm: !shouldSubmit && !!picked.submit };
+  return { ok: true, filled: true, submitted, submitError, needsConfirm: !shouldSubmit && !!picked.submit, ...(typeNotes.length ? { notes: typeNotes } : {}) };
 }
 
 // Automatically fill a login the moment an agent's own page shows a login form for a site whose
@@ -1469,6 +1638,14 @@ function originInScope(origin, scope) {
   return false;
 }
 
+// 🔴 idem: commands that may have changed something on the site — marked just before the
+//    first click, keystroke or eval is sent (after the target was found and the tab is
+//    visible), so a failure before that frees the key and one after it does not.
+const acted = new WeakSet();
+const autologinTried = new Map();                 // `${origin}${path}` -> { at, path } of the last submit there
+// One slot per page, not per origin: a failed login that bounces between /login and /signin
+// would otherwise overwrite the slot each time and be filled forever.
+const AUTOLOGIN_COOLDOWN_MS = 30 * 60 * 1000;
 async function maybeAutofillLogin(page, cmd, summary) {
   if (cmd && cmd.noAutologin) return null;         // explicit opt-out
   if (!credPassphrase) return null;                // vault locked → nothing to autofill with
@@ -1489,10 +1666,25 @@ async function maybeAutofillLogin(page, cmd, summary) {
     entry = vault.loadPayload(CRED_VAULT_FILE, credPassphrase).sites[origin];
   } catch { return null; }
   if (!entry) return null;                          // no credential for this site — leave it
+  // 🔴 Once per origin per AUTOLOGIN_COOLDOWN. A login form that is back after an automatic
+  //    login means the login is not taking (expired, a challenge, wrong password); filling it
+  //    again and again is how accounts get locked. Hand over to a person instead.
+  // Same origin AND same page: a password prompt elsewhere on the site (re-enter your
+  // password, change password) is not the login coming back.
+  let where = '';
+  try { where = new URL(summary.url).pathname; } catch { /* origin parsed above, so unlikely */ }
+  const last = autologinTried.get(`${origin}${where}`);
+  if (last && last.path === where && Date.now() - last.at < AUTOLOGIN_COOLDOWN_MS) {
+    return { origin, again: `the login form is back on ${origin}${where} after an automatic login ${Math.round((Date.now() - last.at) / 60000)} min ago — not filling it again; a person has to sign in` };
+  }
   // Submit stays gated by the same per-site policy; first time waits for an explicit confirm.
-  const r = await fillLogin(page, origin, entry, { confirmSubmit: false }).catch(() => null);
-  if (!r || r.error) return null;                   // detection refused → do not force it
-  return { origin, submitted: r.submitted, submitError: r.submitError, needsConfirm: r.needsConfirm };
+  // 🔴 A fill that failed (fields refused, a 422 from the typing check) is reported, not
+  //    swallowed — and only a submit that happened starts the cooldown, so a form filled but
+  //    left for confirmation is not later mistaken for "the login did not take".
+  const r = await fillLogin(page, origin, entry, { confirmSubmit: false, onInput: () => acted.add(cmd) }).catch((e) => ({ error: e.message.split('\n')[0] }));
+  if (r.error) return { origin, error: `automatic login not done: ${r.error}` };
+  if (r.submitted) autologinTried.set(`${origin}${where}`, { at: Date.now(), path: where });
+  return { origin, submitted: r.submitted, submitError: r.submitError, needsConfirm: r.needsConfirm, notes: r.notes };
 }
 
 async function act(cmd) {
@@ -1510,7 +1702,7 @@ async function act(cmd) {
   //    before a goto or click in the same command has already acted.
   if (cmd.type && typeof cmd.type === 'object' && (cmd.type.fast || cmd.type.delay != null)) {
     const err = new Error(`type: ${cmd.type.fast ? '--fast' : 'delay'} is no longer available — every keystroke `
-      + 'is human-paced (50–150ms, tightened for long text). Send the same command without it.');
+      + 'is human-paced (35–140ms, tightened for long text). Send the same command without it.');
     err.status = 400;
     throw err;
   }
@@ -1718,7 +1910,35 @@ async function act(cmd) {
       catch (e) { done.push(`warm-up skipped: ${e.message.split('\n')[0]}`); }
     }
   }
-  if (cmd.googleLogin) {
+  // 🔴 A page that wants a person (captcha, a second factor, a block notice — challenge.js)
+  //    stops every input step below, on this command and on every later one while it is
+  //    still up: checked before input and again after it. The reply carries reconnect:true and
+  //    the reason; the person finishes it by hand. Never solved by a program, never retried.
+  const snapPage = () => Promise.race([
+    page.evaluate(challenge.SNAPSHOT_EXPR),
+    new Promise((res) => { setTimeout(() => res(null), 3000); }),
+  ]).catch(() => null);
+  // After input: a submit may be loading the next page — wait for it before looking, or the
+  // check reads the old page (or a destroyed one) and passes it.
+  const checkChallenge = async (after) => {
+    if (after) {
+      await human.sleep(600);
+      await page.waitForLoadState('domcontentloaded', { timeout: 8000 }).catch(() => {});
+    }
+    return challenge.check(snapPage, (n) => done.push(n));
+  };
+  const halt = (c) => { result.reconnect = true; result.challenge = c; done.push(challenge.HANDOVER); };
+  const inputs = !!(cmd.googleLogin || cmd.click || cmd.type || cmd.press);
+  let halted = (inputs || cmd.goto || cmd.eval) ? await checkChallenge() : null;
+  // A `go` that only reads has nothing to stop: say what is on the page and carry on. Input
+  // on a later command is checked again and stops then.
+  if (halted && !inputs && !cmd.eval) {
+    result.challenge = { ...halted, stopped: false };
+    done.push(`note: ${halted.reason} — clicking or typing here would stop for a person`);
+    halted = null;
+  }
+  if (halted) halt(halted);
+  if (cmd.googleLogin && !halted) {
     // 🔵 Press the site's "Sign in with Google" button so the agent enters through the Google
     //    session the seeded profile is already signed into (item 3 the master asked for). We try
     //    structural selectors then text labels (googlelogin.js, ordered precise→loose) and click
@@ -1726,6 +1946,7 @@ async function act(cmd) {
     //    NOT click something that merely mentions Google.
     const gl = require('./googlelogin');
     let clickedWith = null;
+    await ensureVisible(page);                       // a 409 must not turn into "no button found" below
     for (const strat of gl.candidateStrategies()) {
       try {
         let loc;
@@ -1734,7 +1955,7 @@ async function act(cmd) {
         if (await loc.count() === 0) continue;
         if (!(await loc.isVisible().catch(() => false))) continue;
         await loc.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
-        await humanClick(page, loc, 8000);
+        await humanClick(page, loc, 8000, () => acted.add(cmd));
         clickedWith = `${strat.kind}:${strat.value}`;
         break;
       } catch { /* try the next strategy */ }
@@ -1880,7 +2101,7 @@ async function act(cmd) {
       result.video = { error: e.message, pageUrl: target };
     }
   }
-  if (cmd.click) {
+  if (cmd.click && !halted) {
     // 🔴 Say what was actually clicked, not what was asked for. A selector that matches
     //    the wrong element still "succeeds", and the caller carries on believing the
     //    cursor is somewhere it is not. Measured 2026-08-25: someone aimed at a composer,
@@ -1888,6 +2109,7 @@ async function act(cmd) {
     //    said `click <selector>` either way.
     const el = page.locator(cmd.click).first();
     await requireMatch(page, cmd.click, 'click');
+    await ensureVisible(page);
     // 🔵 Bring it into view first. A person scrolls to what they are clicking; playwright
     //    will too, but only within its own timeout — doing it as a separate step means a
     //    long page does not eat the click budget and fail on something perfectly usable.
@@ -1898,8 +2120,10 @@ async function act(cmd) {
     //    on toonkit hit an off-screen link and threw `scrollIntoViewIfNeeded: Timeout
     //    9989ms`. click() does its own scrolling, so a shorter, non-fatal pre-scroll is
     //    a nicety, not a gate — swallow its failure and let click() try.
-    await el.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
-    await humanClick(page, el);
+    // 🔵 0.35.0: humanClick brings it into view with the wheel (bringIntoView) and falls back
+    //    to the same short, non-fatal programmatic scroll when the wheel cannot move it.
+    const scrolledNote = await humanClick(page, el, undefined, () => acted.add(cmd));
+    if (scrolledNote) done.push(scrolledNote);
     let what = cmd.click;
     try {
       const d = await Promise.race([
@@ -1915,7 +2139,7 @@ async function act(cmd) {
     } catch { /* describing it is a nicety; the click already happened */ }
     done.push(`click ${what}`);
   }
-  if (cmd.type) {
+  if (cmd.type && !halted) {
     // 🔴 Type like a person by default: focus the field, then send real keystrokes.
     //
     //    This used to be page.fill, which sets the value in one shot — something no
@@ -1929,12 +2153,13 @@ async function act(cmd) {
     //    🔴 0.34.0: no fast/fixed-delay variant any more (refused at the top of act()).
     const { selector, text } = cmd.type;
     await requireMatch(page, selector, 'type');
-    const note = await humanType(page, page.locator(selector).first(), text);
+    await ensureVisible(page);
+    const note = await humanType(page, page.locator(selector).first(), text, () => acted.add(cmd));
     if (note) done.push(note);
     // 🔵 Never log what was typed — it may be a password.
     done.push(`type -> ${selector}`);
   }
-  if (cmd.press) {
+  if (cmd.press && !halted) {
     // 🔴 Accept Control+a as well as Control+A. Playwright wants the exact key name, so
     //    a lowercase letter in a chord silently presses something else — measured
     //    2026-08-25: `Control+a` did not select all, and the Backspace after it deleted
@@ -1942,9 +2167,16 @@ async function act(cmd) {
     const keys = String(cmd.press).split('+');
     const norm = keys.map((k, i) => (i === keys.length - 1 && k.length === 1 ? k.toUpperCase() : k)).join('+');
     // 🔵 Human timing here too: a beat before, and the key held 40–120ms (human.js).
+    await ensureVisible(page);
+    acted.add(cmd);
     await human.sleep(human.keyDelay());
     await page.keyboard.press(norm, { delay: human.holdDelay() });
     done.push(`press ${norm}`);
+  }
+  // What the input led to — a submit can land on a captcha or a second-factor page.
+  if (inputs && !halted) {
+    halted = await checkChallenge(true);
+    if (halted) halt(halted);
   }
 
   // 🔵 Make it visible who is in control.
@@ -1972,7 +2204,10 @@ async function act(cmd) {
   //    engine must stay bound to 127.0.0.1 only.
   let evalResult;
   let evalError;
-  if (cmd.eval) {
+  // 🔴 eval can click and submit as well as any input step, so it stops with them.
+  if (cmd.eval && halted) done.push('eval not run — the page needs a person');
+  if (cmd.eval && !halted) {
+    acted.add(cmd);                                 // idem: eval can press anything
     try {
       const out = await page.evaluate((src) => {
         // eslint-disable-next-line no-new-func
@@ -1986,6 +2221,9 @@ async function act(cmd) {
       evalError = e.message.split('\n')[0];
       done.push('eval(failed)');
     }
+    // What the eval led to — it may have pressed a submit.
+    halted = await checkChallenge(true);
+    if (halted) halt(halted);
   }
 
   // 🔴 Always return which account window this ran in. Without it you can work under
@@ -2112,11 +2350,23 @@ async function act(cmd) {
       //    (requested 2026-09-06). Only fires when the vault is unlocked, a credential exists
       //    for this exact origin, and a visible password field is present. Does nothing
       //    otherwise. The AI never sees the secret; submit stays gated. Failure here must not
-      //    fail the read, so it is swallowed.
+      //    fail the read, so it is reported in result.autologin.error instead.
       try {
-        const af = await maybeAutofillLogin(page, cmd, summary);
+        // Autofill types and may submit — the same stop applies before it does.
+        let pre = result.challenge || null;
+        const pwForm = summary && Array.isArray(summary.inputs) && summary.inputs.some((f) => (f.type || '').toLowerCase() === 'password');
+        if (!pre && pwForm && !(cmd && cmd.noAutologin)) {
+          pre = await checkChallenge();
+          if (pre) halt(pre);
+        }
+        const af = pre ? null : await maybeAutofillLogin(page, cmd, summary);
         if (af) result.autologin = af;   // { origin, submitted, needsConfirm }
-      } catch { /* autofill is a convenience; never let it break the read */ }
+        // 🔴 The login form came back after an automatic login → the session is not taking.
+        //    Hand over instead of filling again (repeat logins are how accounts get locked).
+        if (af && af.again) {
+          halt({ kind: 'login-expired', reason: af.again, url: summary.url });
+        }
+      } catch (e) { result.autologin = { error: `automatic login not done: ${e.message.split('\n')[0]}` }; }
     }
   }
   if (cmd.shot) {
@@ -2312,9 +2562,27 @@ const server = http.createServer(async (req, res) => {
         return res.end(JSON.stringify({ error: `no credential stored for ${origin} — enroll it first` }));
       }
       const page = await getTab(body.tab || 'main', null, false, agent);
+      // 🔴 Same two stops as the automatic login: a page that needs a person, and a login form
+      //    that is back on the same page soon after a submit. An explicit call is no safer in a loop.
+      const notes = [];
+      const c = await challenge.check(() => Promise.race([page.evaluate(challenge.SNAPSHOT_EXPR),
+        new Promise((ok) => { setTimeout(() => ok(null), 3000); })]).catch(() => null), (n) => notes.push(n));
+      if (c) {
+        res.statusCode = 409;
+        return res.end(JSON.stringify({ error: `login not filled: ${c.reason}. ${challenge.HANDOVER}`, reconnect: true, challenge: c }));
+      }
+      let where = '';
+      try { where = new URL(page.url()).pathname; } catch { /* about:blank and the like */ }
+      const last = autologinTried.get(`${origin}${where}`);
+      if (last && last.path === where && Date.now() - last.at < AUTOLOGIN_COOLDOWN_MS) {
+        res.statusCode = 409;
+        return res.end(JSON.stringify({ error: `a login was submitted on ${origin}${where} ${Math.round((Date.now() - last.at) / 60000)} min ago and the form is still here — not filling it again; a person has to sign in`, reconnect: true }));
+      }
       const r = await fillLogin(page, origin, entry, { confirmSubmit: body.confirmSubmit === true });
       if (r.error) { res.statusCode = r.status || 500; return res.end(JSON.stringify({ error: r.error })); }
-      return res.end(JSON.stringify(r));
+      if (r.submitted) autologinTried.set(`${origin}${where}`, { at: Date.now(), path: where });
+      const all = [...notes, ...(r.notes || [])];
+      return res.end(JSON.stringify(all.length ? { ...r, notes: all } : r));
     }
     // --- local site memory (which site for which task). Local file only; never sent to an LLM.
     if (req.method === 'POST' && req.url === '/memory/remember') {
@@ -2480,7 +2748,40 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && req.url === '/act') {
       const cmd = JSON.parse((await readBody(req)) || '{}');
-      return res.end(JSON.stringify(await act(cmd), null, 2));
+      if (cmd.idem == null) return res.end(JSON.stringify(await act(cmd), null, 2));
+      // 🔴 One key, one run (idem.js). Asked again → the first run's reply, never a second run.
+      const prior = idem.begin(cmd.idem);
+      if (prior.state === 'done') {
+        return res.end(JSON.stringify({ ...prior.result, idem: { key: cmd.idem, replayed: true, at: new Date(prior.at).toISOString() } }, null, 2));
+      }
+      if (prior.state !== 'new') {
+        const msg = prior.state === 'running'
+          ? `idem "${cmd.idem}": the first run (started ${new Date(prior.at).toISOString()}) is still going — ask again later; it was not started twice`
+          : `idem "${cmd.idem}": a run started ${new Date(prior.at).toISOString()} and did not finish cleanly (it failed or stopped for a person after clicking or typing, or the engine stopped), so whether it took effect is unknown. Check the site by hand; if it did not happen, clear the key with POST /idem/forget {"key":"…"} and send it again`;
+        res.statusCode = 409;
+        return res.end(JSON.stringify({ error: msg, idem: { key: cmd.idem, state: prior.state } }));
+      }
+      let out;
+      // 🔴 Free the key only if nothing was clicked or typed. A run that failed or stopped for
+      //    a person after its input started may have taken effect (the submit went through,
+      //    then a second-factor page came up) — that key stays "unknown" until a person checks.
+      try { out = await act(cmd); } catch (e) { if (acted.has(cmd)) idem.unsure(cmd.idem); else idem.fail(cmd.idem); throw e; }
+      // A fallback that skipped part of the request did not do the unit of work — never store
+      // it as done (a later run with the same key would replay "done" for something not done).
+      // A reply that carries an error (eval threw, the read or the shot failed) did not finish
+      // either: replaying it as done would never run it again.
+      const failedPart = out && (out.evalError || out.readError || out.shotError
+        || (out.collect && out.collect.error) || (out.video && out.video.error) || (out.autologin && (out.autologin.error || out.autologin.submitError)));
+      // (journalError is not here: the run did what it was asked; only its log line failed.)
+      const clean = out && !out.reconnect && !out.unsupportedOnFallback && !failedPart;
+      if (clean) idem.finish(cmd.idem, out);
+      else if (acted.has(cmd)) idem.unsure(cmd.idem);
+      else idem.fail(cmd.idem);
+      return res.end(JSON.stringify({ ...out, idem: { key: cmd.idem, replayed: false } }, null, 2));
+    }
+    if (req.method === 'POST' && req.url === '/idem/forget') {
+      const { key } = JSON.parse((await readBody(req)) || '{}');
+      return res.end(JSON.stringify({ key, ...idem.forget(key) }));
     }
     res.statusCode = 404;
     res.end(JSON.stringify({ error: 'not found' }));

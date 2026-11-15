@@ -16,10 +16,23 @@ test('mouse path ends exactly on the target, bends, and takes many steps', () =>
   assert.ok(p.every((s) => s.wait > 0), 'each step takes time');
 });
 
-test('key delays stay within 50–150ms and are not constant', () => {
-  const d = Array.from({ length: 200 }, human.keyDelay);
-  assert.ok(d.every((x) => x >= 50 && x <= 150));
+test('key delays stay within 35–140ms and are not constant', () => {
+  const d = Array.from({ length: 200 }, () => human.keyDelay(10));
+  assert.ok(d.every((x) => x >= 35 && x <= 140));
   assert.ok(new Set(d).size > 10, 'an even beat is a bot tell');
+});
+
+test('a sentence end pauses, a letter does not, long text never does', () => {
+  assert.ok(human.pauseAfter('.', 10) >= 250);
+  assert.ok(human.pauseAfter('다', 10) === 0);
+  assert.ok(human.pauseAfter('.', 5000) === 0);
+});
+
+test('typos are rare, latin-only, a keyboard neighbour, and off for long text', () => {
+  let n = 0;
+  for (let i = 0; i < 20000; i += 1) { const t = human.typoFor('a', 10); if (t) { n += 1; assert.ok('sq'.includes(t)); } }
+  assert.ok(n > 200 && n < 700, `rate ~2%, got ${n}`);
+  for (let i = 0; i < 2000; i += 1) { assert.equal(human.typoFor('가', 10), null); assert.equal(human.typoFor('a', 5000), null); }
 });
 
 test('click point lands inside the box, away from the edges', () => {
@@ -58,7 +71,7 @@ test('long text tightens key spacing so typing fits the request limit', () => {
     const total = Array.from({ length: n }, () => human.keyDelay(n)).reduce((a, b) => a + b, 0);
     assert.ok(total < 45000, `${n} chars took ${total}ms`);
   }
-  assert.ok(!human.tightened(300) && human.tightened(301));
+  assert.ok(!human.tightened(342) && human.tightened(343));   // 30s budget ÷ 87.5ms mean key gap
 });
 
 // A fake /json/version so switchTo runs its real logic.

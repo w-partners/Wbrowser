@@ -16,6 +16,7 @@ Usage (called by `wb`, not by people):
 """
 import json
 import os
+import re
 import sys
 
 # The default browser is 1 and lives on the historical ports.
@@ -76,11 +77,24 @@ def add(name):
     if not name or name.isdigit() or name in ("default",):
         sys.stderr.write("A browser name must be a word, not a number or 'default'.\n")
         return 2
+    # 🔴 One browser, one profile directory, never shared. The name IS the directory name,
+    #    so it must not be able to point anywhere else: "a/../work" would land in work's
+    #    profile, and "Work" next to "work" is a different browser here but the SAME folder
+    #    on a case-insensitive disk (Windows Chrome, macOS) — two accounts in one cookie jar.
     data = load()
     for b in data["browsers"]:
         if b["name"] == name:          # idempotent: making it twice is not an error
-            emit(b["num"], b["name"])
+            emit(b["num"], b["name"])  # (also for a name made before the rule below existed)
             return 0
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,31}", name):
+        sys.stderr.write("A browser name is letters, digits, - and _ (up to 32, no / or spaces): "
+                         "it becomes the profile folder name.\n")
+        return 2
+    for b in data["browsers"]:
+        if b["name"].lower() == name.lower():
+            sys.stderr.write("'%s' would share a profile folder with browser %s '%s' on a "
+                             "case-insensitive disk — pick another name.\n" % (name, b["num"], b["name"]))
+            return 2
     num = max([1] + [b["num"] for b in data["browsers"]]) + 1
     data["browsers"].append({"num": num, "name": name})
     save(data)

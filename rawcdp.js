@@ -267,7 +267,7 @@ class RawCDP {
   // that handles the common playwright forms, then dispatch a real mouse click at its
   // centre. If the element cannot be found, or its box is zero-size, we throw a clear
   // message rather than clicking nothing or leaking a SyntaxError.
-  async click(selector) {
+  async click(selector, onInput) {
     // The resolver runs in the page: it understands `text=X` / `:has-text("X")` /
     // `role=button[name="X"]`-ish forms by text search, and otherwise falls back to
     // querySelector. It returns a labelled result so the engine can explain a miss.
@@ -285,8 +285,39 @@ class RawCDP {
       try { var e3=document.querySelector(sel); return e3?{ok:1,box:box(e3)}:{ok:0,why:'no element matches '+sel}; }
       catch(err){ return {ok:0,why:'selector not supported in the raw-CDP fallback: '+sel+' (restart Chrome for the full engine)'}; }
     })(${JSON.stringify(selector)})`;
-    const res = await this.evaluate(resolver);
+    let res = await this.evaluate(resolver);
     if (!res || !res.ok) throw new Error(`rawcdp click: ${(res && res.why) || 'could not resolve ' + selector}`);
+    // 🔴 Off screen → bring it in with the wheel, as a hand would (a mouse event at a
+    //    coordinate outside the viewport hits nothing).
+    const vp0 = await this.evaluate('({width: innerWidth, height: innerHeight})').catch(() => null);
+    let note = null;
+    // The box is the element's centre — inside the viewport on both axes or it is not clickable.
+    const inView = (bx) => vp0 && bx && bx.y >= 0 && bx.y <= vp0.height && bx.x >= 0 && bx.x <= vp0.width;
+    if (vp0 && res.box) {
+      for (let i = 0; i < 30; i += 1) {
+        const bx = res.box;
+        if (inView(bx)) break;
+        const want = bx.y - vp0.height * human.rand(0.35, 0.6);
+        const dy = Math.sign(want) * Math.min(Math.abs(want), human.rand(220, 420));
+        await this.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: vp0.width / 2, y: vp0.height / 2, deltaX: 0, deltaY: dy });
+        await human.sleep(human.rand(70, 180));
+        const next = await this.evaluate(resolver);
+        if (!next || !next.ok || !next.box || Math.abs(next.box.y - bx.y) < 1) {
+          note = 'could not bring it into view with the wheel'; break;
+        }
+        res = next;
+      }
+    }
+    // 🔴 Still off screen (the wheel did not move it, or it is further than 30 turns): one
+    //    programmatic scroll, as the playwright lane falls back to — and if even that leaves
+    //    it outside the viewport, fail rather than click at a coordinate that hits nothing.
+    if (vp0 && res.box && !inView(res.box)) {
+      await this.evaluate(`(function(s){var e=document.querySelector(s); if(e) e.scrollIntoView({block:'center'});})(${JSON.stringify(selector)})`).catch(() => null);
+      const again = await this.evaluate(resolver).catch(() => null);
+      if (again && again.ok) res = again;
+      if (!inView(res.box)) throw new Error(`rawcdp click: ${selector} could not be brought into view — not clicked`);
+      note = 'scrolled into view without the wheel (the wheel did not reach it)';
+    }
     const b = res.box;
     if (!b) throw new Error(`rawcdp click: resolved ${selector} but got no box`);
     if (b.w < 1 || b.h < 1) throw new Error(`rawcdp click: ${selector} has a zero-size box — playwright is needed to click it; restart Chrome`);
@@ -305,7 +336,22 @@ class RawCDP {
         + 'return !!c&&!!h&&(c===h||c.contains(h));})()').catch(() => false);
       if (same) { target = p; break; }
     }
+    if (onInput) onInput();
     await human.clickAlong(this, vp || {}, target, { move, down, up });
+    return note;
+  }
+
+  // Input only to a tab a person could see (same rule as engine.js ensureVisible).
+  async ensureVisible() {
+    const vis = () => this.evaluate('document.visibilityState').catch(() => 'unknown');
+    if (await vis() !== 'hidden') return;
+    await this.send('Page.bringToFront').catch(() => {});
+    await human.sleep(human.rand(150, 350));
+    if (await vis() === 'hidden') {
+      const err = new Error('the tab is not visible (is the window minimized?) — input to a hidden tab can be throttled or lost. Restore the window and run the command again.');
+      err.status = 409;
+      throw err;
+    }
   }
 
   // 🔵 Open a NEW tab over raw CDP and attach to it. This is the one thing the fallback could
@@ -335,7 +381,7 @@ class RawCDP {
     const str = String(text == null ? '' : text);
     // 🔵 One character at a time with uneven gaps (human.js) — a whole string landing in one
     //    event is an instant bot tell.
-    for (const ch of str) { await this.send('Input.insertText', { text: ch }); await human.sleep(human.keyDelay(str.length)); }
+    for (const ch of str) { await this.send('Input.insertText', { text: ch }); await human.sleep(human.keyDelay(str.length) + human.pauseAfter(ch, str.length)); }
   }
 
   close() {

@@ -5,6 +5,70 @@ has the detail.
 
 ---
 
+## 0.35.0 — 2026-11-16
+
+### Stops for a person
+- A captcha, a second-factor prompt or a block notice ("unusual activity", "보호조치") is
+  checked for before a command's clicks, typing and `eval`, and again after them (waiting for
+  a page the submit starts loading within about half a second; one that comes up later is
+  caught by the next command's check). When one is up, nothing more is clicked, typed or
+  evaluated, and the reply says `reconnect: true` with `challenge: {kind, reason, url}`.
+  Finish it by hand in that tab and run again; nothing solves it. A captcha already solved
+  (its response filled in) and the invisible reCAPTCHA badge do not stop work. A page that
+  cannot be checked says so in `done` instead of passing as clear. A `go` that only reads
+  does not stop: it reports the page in `challenge` (`stopped: false`) and a note.
+- Automatic login fills a site at most once per 30 minutes after a real submit. The same login
+  page coming back after that is handed over (`challenge.kind: "login-expired"`) instead of
+  being filled again. A fill that fails now says `autologin.error` instead of nothing.
+  `POST /cred/login` stops the same way: on a challenge page, or on the same login page
+  within 30 minutes of a submit, it answers 409 with `reconnect: true`.
+- `cron` jobs stop at a step that needs a person.
+
+### Typing and clicking
+- Keys are 35–140ms apart (was 50–150), with a pause after a sentence or a comma, and now and
+  then a neighbouring key that is backspaced (never in password, number, email, phone or URL
+  fields). Clicks are held 50–130ms.
+- ⚠️ `type` now checks that the field holds what was typed (Hangul compared after NFC). If
+  not, it retypes once without key events; still wrong → 422, and nothing after it in the
+  command runs. A `maxlength` cut, or a page that reformats the text the same way both
+  times, is reported in `done` rather than failed. The comparison is exact (a dropped space
+  counts); rich editors only need to contain the text, with spacing collapsed.
+  A field that cannot be read back after typing (it vanished, the page moved on) is a 422
+  too, and nothing is retyped.
+- Off-screen elements are reached with the mouse wheel before clicking or typing.
+- Input only goes to a visible tab: a background tab is brought to the front, and a
+  minimized window is refused with 409.
+- The fallback lane (raw CDP, when playwright cannot attach) has the same key spacing, wheel
+  scroll before clicks and challenge stops, but no typos, no wheel before typing, and no
+  check of the typed text.
+
+### Run once: `--idem`
+- `wb --idem <key> …` (or `"idem"` in `/act`) runs a command at most once per key, for 7
+  days. Asked again, it returns the first run's reply (`idem.replayed: true`). While the
+  first run is going, or if it stopped after clicking or typing without finishing, the key
+  answers 409 until a person checks and clears it with `POST /idem/forget {"key": …}`.
+  A run that failed before its first click or key frees the key; one whose reply carries an
+  error (a failed `eval`, read, screenshot, `collect`, `video`, or an automatic login that
+  failed to fill or to submit) is never stored as done. A key older than 7 days is forgotten.
+  The CLI refuses `--idem` on commands that do not go through the engine's reply (for
+  example `login`, `take`, `shot`) rather than ignore it.
+  Records are in `~/.wbrowser/idem.json` (owner-only; `WBROWSER_IDEM_FILE` to move it).
+
+### Scheduled jobs are paced
+- Jobs start 0–10 minutes after their minute (`jitterMinutes`), run one at a time, and stay
+  30–60s on a page after each `goto` (`dwellSeconds`). `dailyMax` caps runs a day (a run
+  counts once it succeeded or clicked or typed anything; one that failed before any input does
+  not). `verifyUrl` / `verifyText` check the result from outside, without a login.
+
+### Also
+- `WBROWSER_LANG` (e.g. `ko-KR`) sets the browser language for launched Chrome; an invalid
+  value stops a new launch, and a Chrome already running with another language is reported.
+- A headless launch warns that its WebGL renders in software (SwiftShader).
+- `browsers add` refuses a name with characters outside `A-Z a-z 0-9 _ -` or one that differs
+  from an existing name only in case, so two browsers can never share a profile folder.
+
+---
+
 ## 0.34.0 — 2026-11-13
 
 ### Human-shaped input is no longer optional

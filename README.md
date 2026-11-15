@@ -444,6 +444,15 @@ look like submit / payment / delete are **refused**:
 
 You opt in per job, not globally.
 
+### Pacing
+
+Jobs never start on the dot and never run at the same time: each starts 0–10 minutes after
+its minute (`"jitterMinutes"`, 0 turns it off), the daemon runs them one after another, and a
+job stays 30–60s on each page after a `goto` (`"dwellSeconds"`). `"dailyMax": 3` caps runs a
+day (extra ones are skipped and logged). `"verifyUrl"` (and optional `"verifyText"`) is
+fetched **without a login** after the run, so a job counts as done only if the result is
+visible from outside. A step that hits a page needing a person stops the job.
+
 ---
 
 ## Who's driving? (visual indicator)
@@ -675,6 +684,7 @@ This tool drives a browser that holds **all your logins**. Treat it accordingly.
 | `WBROWSER_CDP_PORT` | `9222` | Chrome debugging port |
 | `WBROWSER_PORT` | `7981` | Control engine port |
 | `WBROWSER_PROXY` | — | Send all traffic through this proxy: `http://host:port` or `socks5://host:port` (a residential gateway, a phone tether, a box on your home line). No username/password — Chrome cannot use them; allowlist your IP or run a local forwarder. Read at Chrome start only. |
+| `WBROWSER_LANG` | — | Pin the language for every run of this profile, e.g. `ko-KR` — sets Chrome's UI language and `Accept-Language`. Unset: Chrome follows the system. |
 | `WIN_AGENT` | derived | Name shown in banner and tab title |
 | `WIN_TAB` | `main` | Which of that agent's tabs to drive |
 | `WBROWSER_MCP_TOKEN` | — | **Required** for remote MCP |
@@ -683,13 +693,28 @@ This tool drives a browser that holds **all your logins**. Treat it accordingly.
 | `WBROWSER_STARIAN_PORT` | `7982` | Port for the read-only control surface (see below) |
 
 > 🔴 **How it drives a page — always.** A click travels a curved path to a point inside
-> the element and is held briefly, the way a hand does it; `type` spaces keys 50–150ms
-> apart at random; after `go` the pointer drifts and the page scrolls a little and back.
+> the element and is held briefly, the way a hand does it; `type` spaces keys 35–140ms
+> apart at random, pauses at the end of a sentence, now and then hits a neighbouring key and
+> backspaces it (never in a password field), and then checks that the field holds exactly
+> what was meant (Hangul included) — if not, it retypes once and otherwise fails with 422; after `go` the pointer drifts and the page scrolls a little and back.
 > A `go` to an `m.` host (e.g. `m.example.com`) presents the tab as a phone — user agent,
 > client hints, viewport, touch — before the request leaves, and any other host turns it
 > back. On a headless browser the `HeadlessChrome` marker is removed from what pages see.
 > This is always on — there is no switch to turn it off, and `type --fast` is refused —
 > so clicks and typing are slower than instant (a click ~0.5s, 100 characters ~10s).
+> Off-screen elements are reached with the mouse wheel, and input only goes to a visible
+> tab (a background tab is brought forward; a minimized window is refused with 409).
+>
+> 🔴 **It stops for a person.** A captcha, a second-factor prompt or a block notice
+> ("unusual activity", "보호조치") stops every click, keystroke and `eval` in that command and the
+> next (a `go` that only reads just reports it), and the reply says `reconnect: true` with the reason. Finish it by hand in that tab,
+> then run again — nothing solves it for you. Automatic login fills a site once per 30
+> minutes; a login form that comes back is handed over the same way, never refilled.
+>
+> 🔵 **Run once.** `wb --idem <key> click …` runs at most once per key: asked again (say,
+> after a timeout) it returns the first run's reply instead of clicking twice. Use one key
+> per unit of work. Commands whose reply the engine does not keep (`login`, `take`, `shot`, …)
+> refuse `--idem` instead of ignoring it.
 
 ---
 

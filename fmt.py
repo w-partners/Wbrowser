@@ -69,6 +69,14 @@ def main():
         print("  🔴 screenshot:", d["shotError"], "(the rest of the command still ran)")
     if d.get("evalError"):
         print("  ❌ execution error:", d["evalError"])
+    if d.get("reconnect"):
+        c = d.get("challenge") or {}
+        print("  🔴 needs a person (%s): %s — %s" % (c.get("kind", "?"), c.get("reason", ""), (c.get("url") or "")[:80]))
+        print("     reconnect: true — nothing more was typed or clicked. Finish it by hand in this tab, then run again.")
+    if (d.get("idem") or {}).get("replayed"):
+        print("  🔵 idem %s: already ran at %s — this is that run's reply; nothing ran again" % (d["idem"].get("key"), d["idem"].get("at")))
+    if (d.get("autologin") or {}).get("error"):
+        print("  🔴", d["autologin"]["error"])
     if (d.get("autologin") or {}).get("submitError"):
         print("  🔴 login filled, but", d["autologin"]["submitError"])
 

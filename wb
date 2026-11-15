@@ -215,7 +215,7 @@ AGENT_NAME="$(_agent_name)"
 
 _json() {
   WIN_ACCOUNT_RESOLVED="$ACCOUNT" WIN_AGENT="$AGENT_NAME" WIN_TAB="$TAB" \
-    WIN_NO_AUTOLOGIN="${NO_AUTOLOGIN:-}" WIN_SCOPE="${SCOPE:-}" \
+    WIN_NO_AUTOLOGIN="${NO_AUTOLOGIN:-}" WIN_SCOPE="${SCOPE:-}" WIN_IDEM="${IDEM:-}" \
     python3 "$DIR/mkcmd.py" "$@"
 }
 
@@ -289,6 +289,7 @@ _require_engine() {
 #    every command, and hand it to mkcmd via WIN_TAB.
 ACCOUNT="${WIN_ACCOUNT:-}"
 TAB=""
+IDEM=""
 AGENT_OVERRIDE=""
 ARGS=()
 while [ $# -gt 0 ]; do
@@ -316,6 +317,13 @@ while [ $# -gt 0 ]; do
     #    e.g. wb go <url> --scope https://github.com --scope https://gitlab.com
     --scope) SCOPE="${SCOPE:+$SCOPE,}$2"; shift 2 || shift ;;
     --scope=*) SCOPE="${SCOPE:+$SCOPE,}${1#--scope=}"; shift ;;
+    # 🔵 --idem <key>: run this command at most once. Asked again with the same key, the
+    #    engine returns the first run's reply instead of running it again (a retry after a
+    #    timeout cannot submit twice). Use one key per unit of work, e.g. post-2026-11-16-a.
+    --idem) IDEM="$(printf '%s' "${2:-}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"; shift 2 || shift
+            [ -n "$IDEM" ] || { echo "❌ --idem needs a key (wb --idem <key> …) — not running without the run-once guard" >&2; exit 2; } ;;
+    --idem=*) IDEM="$(printf '%s' "${1#--idem=}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"; shift
+            [ -n "$IDEM" ] || { echo "❌ --idem needs a key (wb --idem=<key> …) — not running without the run-once guard" >&2; exit 2; } ;;
     *) ARGS+=("$1"); shift ;;
   esac
 done
@@ -334,6 +342,16 @@ case "$cmd" in
   up|new|browsers|version|--version|-v|help|--help|-h) ;;
   *) _needs_install && exit 1 ;;
 esac
+
+# 🔴 --idem only means something where the engine keeps the reply. Anywhere else it would be
+#    silently dropped and the command would run every time — refuse instead. `shot` is out too:
+#    a replay does not keep the image, so a second call would print nothing.
+if [ -n "${IDEM:-}" ]; then
+  case "$cmd" in
+    go|read|click|type|press|console|errors|network|eval|collect|video) ;;
+    *) echo "❌ --idem works with go, read, click, type, press, console, errors, network, eval, collect and video — not with '$cmd'. Not running." >&2; exit 2 ;;
+  esac
+fi
 
 case "$cmd" in
   new)
@@ -576,6 +594,15 @@ if (d or {}).get('error') and not (d or {}).get('collect'):
 # 🔴 The fallback may have skipped part of the request — say so before the counts.
 if (d or {}).get('unsupportedOnFallback'):
     print('🔴 ' + str(d['unsupportedOnFallback']))
+# 🔴 A captcha / block page or a failed automatic login is why a collect comes back empty —
+#    say it here; this branch does not go through fmt.py.
+ch = (d or {}).get('challenge') or {}
+if ch:
+    print('🔴 the page needs a person (%s): %s — %s' % (ch.get('kind'), ch.get('reason'), ch.get('url') or ''))
+if ((d or {}).get('idem') or {}).get('replayed'):
+    print('🔁 replayed the first run of this --idem key — nothing ran again')
+if ((d or {}).get('autologin') or {}).get('error'):
+    print('🔴 ' + d['autologin']['error'])
 c = (d or {}).get('collect') or {}
 if c.get('error'):
     print('❌ ' + c['error'])
@@ -611,6 +638,11 @@ if (d or {}).get('error') and not (d or {}).get('video'):
     print('❌ ' + str(d['error'])[:600]); sys.exit(1)
 if (d or {}).get('unsupportedOnFallback'):
     print('🔴 ' + str(d['unsupportedOnFallback'])); sys.exit(1)
+if ((d or {}).get('idem') or {}).get('replayed'):
+    print('🔁 replayed the first run of this --idem key — nothing ran again')
+ch = (d or {}).get('challenge') or {}
+if ch:
+    print('🔴 the page needs a person (%s): %s — %s' % (ch.get('kind'), ch.get('reason'), ch.get('url') or ''))
 v = (d or {}).get('video') or {}
 if v.get('error'):
     print('❌ ' + v['error'])

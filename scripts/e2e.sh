@@ -67,7 +67,7 @@ trap cleanup EXIT
 cd "$(dirname "$0")/.." || die "cannot find the repo root"
 
 printf '· Starting headless Chrome (profile %s, cdp %s)\n' "$PROFILE" "$PORT_CDP"
-WBROWSER_PROFILE_DIR="$PROFILE" WBROWSER_CDP_PORT="$PORT_CDP" WBROWSER_HEADLESS=1 \
+WBROWSER_PROFILE_DIR="$PROFILE" WBROWSER_CDP_PORT="$PORT_CDP" WBROWSER_HEADLESS=1 WBROWSER_LANG=ko-KR \
   node launch.js >/dev/null 2>&1 \
   || die "Chrome did not start. Run it by hand to see why:
     WBROWSER_PROFILE_DIR=$PROFILE WBROWSER_CDP_PORT=$PORT_CDP WBROWSER_HEADLESS=1 node launch.js"
@@ -75,7 +75,7 @@ WBROWSER_PROFILE_DIR="$PROFILE" WBROWSER_CDP_PORT="$PORT_CDP" WBROWSER_HEADLESS=
 printf '· Starting the engine on port %s\n' "$PORT_ENGINE"
 CRED_FILE="$(mktemp -u --suffix=.enc)"   # throwaway vault for the autologin check
 WBROWSER_CDP_PORT="$PORT_CDP" WBROWSER_PORT="$PORT_ENGINE" WIN_AGENT="$AGENT" \
-  WBROWSER_CRED_FILE="$CRED_FILE" WBROWSER_CRED_AUDIT="$(mktemp -u)" \
+  WBROWSER_CRED_FILE="$CRED_FILE" WBROWSER_CRED_AUDIT="$(mktemp -u)" WBROWSER_IDEM_FILE="$(mktemp -u)" \
   node engine.js >/dev/null 2>&1 &
 
 for _ in $(seq 1 25); do
@@ -263,12 +263,55 @@ node -e '
     // goto path where playwright HAS a response object (resp) and status >= 400 — the exact
     // branch whose result.httpStatus read was a TDZ crash (fixed 2026-09-05, idifference).
     // A local server gives resp here just like external https does.
+    // Every tab asks for /favicon.ico. Left to the open-ended route below, each one holds a
+    // connection forever, and at Chrome six per host later gotos stall until they time out.
+    if (req.url === "/favicon.ico") { res.writeHead(404); res.end(); return; }
     if (req.url === "/404") {
       res.writeHead(404, {"Content-Type": "text/html"});
       res.end("<!doctype html><html><head><title>Missing</title></head><body>gone</body></html>");
       return;
     }
-    if (req.url === "/login") {
+    // 0.35.0 fixtures: a challenge page, a button far below the fold, a text field.
+    if (req.url === "/captcha") {
+      res.writeHead(200, {"Content-Type": "text/html; charset=utf-8"});
+      res.end("<!doctype html><html><head><title>Check</title></head><body>"
+            + "<p>자동입력 방지 문자를 입력해 주세요</p><input id=c><button id=go onclick=\"document.querySelector(`p`).textContent=`pressed`\">OK</button></body></html>");
+      return;
+    }
+    if (req.url === "/then-captcha") {
+      // The click goes through, and what comes up after it is a captcha.
+      res.writeHead(200, {"Content-Type": "text/html; charset=utf-8"});
+      res.end("<!doctype html><html><head><title>Send</title></head><body>"
+            + "<button id=send onclick=\"window.sent=1;document.body.insertAdjacentHTML(`beforeend`,`<p>자동입력 방지 문자를 입력해 주세요</p>`)\">Send</button></body></html>");
+      return;
+    }
+    if (req.url === "/then-go") {
+      // The click navigates, and the page it lands on is a captcha.
+      res.writeHead(200, {"Content-Type": "text/html; charset=utf-8"});
+      res.end("<!doctype html><html><head><title>Go</title></head><body>"
+            + "<button id=go2 onclick=\"setTimeout(function(){location.href=`/captcha`},300)\">Next</button></body></html>");
+      return;
+    }
+    if (req.url === "/fields") {
+      // Fields that do not take text as typed: a maxlength, one that upper-cases, and one that
+      // drops the z key (key events only — text inserted without keys still gets in).
+      res.writeHead(200, {"Content-Type": "text/html; charset=utf-8"});
+      res.end("<!doctype html><html><head><title>Fields</title></head><body>"
+            + "<input id=ml maxlength=5><input id=up oninput=\"this.value=this.value.toUpperCase()\">"
+            + "<input id=nz onkeydown=\"if(event.key===`z`)event.preventDefault()\">"
+            + "<input id=gone oninput=\"if(this.value.length>=3)this.remove()\">"
+            + "<div style=\"position:relative;width:80px\"><button id=cov>covered</button>"
+            + "<div style=\"position:absolute;inset:0;background:#fff\"></div></div></body></html>");
+      return;
+    }
+    if (req.url === "/far") {
+      res.writeHead(200, {"Content-Type": "text/html"});
+      res.end("<!doctype html><html><head><title>Far</title></head><body onwheel=\"window.wheels=(window.wheels||0)+1\">"
+            + "<div style=\"height:3000px\">top</div><button id=far onclick=\"window.hits=(window.hits||0)+1\">far</button>"
+            + "<textarea id=t></textarea><div style=\"height:400px\"></div></body></html>");
+      return;
+    }
+    if (["/login", "/signin"].includes(req.url.split("?")[0])) {
       // A login form — a visible password field is the signal that auto-fill keys on.
       res.writeHead(200, {"Content-Type": "text/html"});
       res.end("<!doctype html><html><head><title>Sign in</title></head><body><h1>Sign in</h1>"
@@ -326,6 +369,92 @@ check "and the stored secret never comes back in the reply" "$A" "'E2E_SECRET_PW
 V=$(act '{"eval":"document.querySelector(\"input[type=password]\").value.length","agent":"'"$AGENT"'","tab":"login"}')
 check "and the password field was actually filled"          "$V" "isinstance(d.get('result'), int) and d['result'] > 0"
 
+# A fill left for confirmation was never submitted — reading the form again is not "the login
+# did not take".
+A2=$(act '{"read":true,"agent":"'"$AGENT"'","tab":"login"}')
+check "a filled but unsubmitted login is not taken for an expired one" "$A2" "not d.get('reconnect')"
+# Confirm the submit once on another login page of the site (the site's policy becomes
+# "always"), then let the autofill submit by itself on /login; the form coming back after that
+# is the hand-over case.
+act '{"goto":"'"$ORIGIN"'/signin","noAutologin":true,"agent":"'"$AGENT"'","tab":"signin"}' >/dev/null
+L=$(curl -s -X POST "http://127.0.0.1:$PORT_ENGINE/cred/login" -H 'Content-Type: application/json' \
+  -d '{"origin":"'"$ORIGIN"'","agent":"'"$AGENT"'","tab":"signin","confirmSubmit":true}')
+check "an explicit login with confirmSubmit submits" "$L" "d.get('submitted') is True"
+L2=$(curl -s -X POST "http://127.0.0.1:$PORT_ENGINE/cred/login" -H 'Content-Type: application/json' \
+  -d '{"origin":"'"$ORIGIN"'","agent":"'"$AGENT"'","tab":"signin","confirmSubmit":true}')
+check "the same login page still there after it is not filled again" "$L2" "d.get('reconnect') is True and 'not filling it again' in d.get('error','')"
+A3=$(act '{"goto":"'"$ORIGIN"'/login","read":true,"agent":"'"$AGENT"'","tab":"login"}')
+check "the autofill submits once the site's submit was confirmed" "$A3" "(d.get('autologin') or {}).get('submitted') is True"
+A4=$(act '{"read":true,"agent":"'"$AGENT"'","tab":"login"}')
+check "a login form back after an autofill hands over instead of filling again" "$A4" \
+  "d.get('reconnect') is True and (d.get('challenge') or {}).get('kind') == 'login-expired'"
+# Back on the first login page: its own cooldown still holds (one slot per page, not per site).
+B=$(act '{"goto":"'"$ORIGIN"'/signin","read":true,"agent":"'"$AGENT"'","tab":"signin"}')
+check "a login bouncing between two pages is not filled again on either" "$B" \
+  "d.get('reconnect') is True and (d.get('challenge') or {}).get('kind') == 'login-expired'"
+
+# --- 0.35.0: stop for a person · wheel into view · Korean checked · idem ---------
+G=$(act '{"goto":"'"$ORIGIN"'/captcha","read":true,"agent":"'"$AGENT"'","tab":"cap"}')
+check "a go that only reads reports the challenge without stopping" "$G" \
+  "not d.get('reconnect') and (d.get('challenge') or {}).get('stopped') is False"
+C=$(act '{"goto":"'"$ORIGIN"'/captcha","click":"#go","agent":"'"$AGENT"'","tab":"cap"}')
+check "a challenge page stops input with reconnect:true" "$C" \
+  "d.get('reconnect') is True and not any(s.startswith('click') for s in d.get('done',[]))"
+V=$(act '{"read":true,"agent":"'"$AGENT"'","tab":"cap"}')
+check "and the button really was not pressed" "$V" "'pressed' not in (d.get('page') or {}).get('text','x')"
+V=$(act '{"eval":"1","agent":"'"$AGENT"'","tab":"cap"}')
+check "and eval does not run on it either" "$V" "'result' not in d and any('eval not run' in s for s in d.get('done',[]))"
+
+act '{"goto":"'"$ORIGIN"'/then-captcha","agent":"'"$AGENT"'","tab":"cap"}' >/dev/null
+S=$(act '{"click":"#send","idem":"e2e-send-'"$$"'","agent":"'"$AGENT"'","tab":"cap"}')
+check "a captcha after a click is reported with reconnect:true" "$S" "d.get('reconnect') is True"
+S2=$(act '{"click":"#send","idem":"e2e-send-'"$$"'","agent":"'"$AGENT"'","tab":"cap"}')
+check "and its idem key is not freed — the click may have taken effect" "$S2" \
+  "(d.get('idem') or {}).get('state') == 'unknown'"
+
+act '{"goto":"'"$ORIGIN"'/then-go","agent":"'"$AGENT"'","tab":"cap"}' >/dev/null
+N=$(act '{"click":"#go2","agent":"'"$AGENT"'","tab":"cap"}')
+check "a click that navigates onto a captcha is caught on the new page" "$N" \
+  "d.get('reconnect') is True and '/captcha' in ((d.get('challenge') or {}).get('url') or '')"
+
+act '{"goto":"'"$ORIGIN"'/far","agent":"'"$AGENT"'","tab":"far"}' >/dev/null
+act '{"eval":"window.wheels = 0","agent":"'"$AGENT"'","tab":"far"}' >/dev/null   # the after-goto warm-up wheels too
+F=$(act '{"click":"#far","idem":"e2e-far-'"$$"'","agent":"'"$AGENT"'","tab":"far"}')
+check "an off-screen button is clicked after wheeling to it" "$F" \
+  "any(s.startswith('click') for s in d.get('done',[])) and not any('without the wheel' in s for s in d.get('done',[]))"
+F2=$(act '{"click":"#far","idem":"e2e-far-'"$$"'","agent":"'"$AGENT"'","tab":"far"}')
+check "the same idem key replays instead of clicking again" "$F2" "(d.get('idem') or {}).get('replayed') is True"
+# A field that vanishes on its last key (an OTP box that submits itself) cannot be read back:
+# that is a failure, not "the page reformatted it", and nothing is retyped into whatever has focus.
+GN=$(act '{"goto":"'"$ORIGIN"'/fields","type":{"selector":"#gone","text":"abc"},"agent":"'"$AGENT"'","tab":"gone"}')
+check "a field gone after typing fails instead of passing as reformatted" "$GN" "'could not be read back' in d.get('error','')"
+# A click that never got through (the button is covered) pressed nothing — the key is free to retry.
+act '{"goto":"'"$ORIGIN"'/fields","agent":"'"$AGENT"'","tab":"cov"}' >/dev/null
+act '{"click":"#cov","idem":"e2e-cov-'"$$"'","agent":"'"$AGENT"'","tab":"cov"}' >/dev/null
+K2=$(act '{"click":"#cov","idem":"e2e-cov-'"$$"'","agent":"'"$AGENT"'","tab":"cov"}')
+check "a click that failed before pressing leaves its idem key free" "$K2" \
+  "'did not finish cleanly' not in d.get('error','') and not (d.get('idem') or {}).get('replayed')"
+# An eval that threw is not a finished run — it is never replayed as done.
+act '{"eval":"(() => { throw new Error(\"nope\") })()","idem":"e2e-ev-'"$$"'","agent":"'"$AGENT"'","tab":"cov"}' >/dev/null
+E2=$(act '{"eval":"1","idem":"e2e-ev-'"$$"'","agent":"'"$AGENT"'","tab":"cov"}')
+check "a failed eval is not replayed as done" "$E2" "not (d.get('idem') or {}).get('replayed')"
+V=$(act '{"eval":"[window.hits || 0, scrollY > 1000, (window.wheels || 0) > 0]","agent":"'"$AGENT"'","tab":"far"}')
+check "so the button was pressed exactly once, reached by wheel events" "$V" "d.get('result') == [1, True, True]"
+KO='안녕하세요, W브라우저입니다. 한글 조합 확인!'
+act '{"type":{"selector":"#t","text":"'"$KO"'"},"agent":"'"$AGENT"'","tab":"far"}' >/dev/null
+V=$(act '{"eval":"document.querySelector(\"#t\").value","agent":"'"$AGENT"'","tab":"far"}')
+check "Korean lands in the field exactly (NFC)" "$V" "d.get('result') == '$KO'"
+
+act '{"goto":"'"$ORIGIN"'/fields","agent":"'"$AGENT"'","tab":"far"}' >/dev/null
+T=$(act '{"type":{"selector":"#ml","text":"abcdefgh"},"agent":"'"$AGENT"'","tab":"far"}')
+check "a maxlength cut is reported, not failed" "$T" "not d.get('error') and any('at most 5' in s for s in d.get('done',[]))"
+T=$(act '{"type":{"selector":"#up","text":"abc"},"agent":"'"$AGENT"'","tab":"far"}')
+check "a field that reformats the text is reported, not failed" "$T" "not d.get('error') and any('reformatted' in s for s in d.get('done',[]))"
+T=$(act '{"type":{"selector":"#nz","text":"azb"},"agent":"'"$AGENT"'","tab":"far"}')
+check "a field that lost a key is retyped without keys" "$T" "not d.get('error') and any('retyped' in s for s in d.get('done',[]))"
+V=$(act '{"eval":"document.querySelector(\"#nz\").value","agent":"'"$AGENT"'","tab":"far"}')
+check "and then holds exactly the text" "$V" "d.get('result') == 'azb'"
+
 # 🔵 By port, never by name.
 slow_pid=$(ss -ltnp 2>/dev/null | grep ":$PORT_SLOW " | grep -oP 'pid=\K[0-9]+' | head -1)
 [ -n "${slow_pid:-}" ] && kill "$slow_pid" 2>/dev/null
@@ -356,6 +485,9 @@ check "Control+a then Backspace empties the field" "$V" "d.get('result') == ''"
 # 🔵 And that a lowercase chord is normalised — the actual bug from v0.5.0.
 R=$(act '{"press":"Control+a","agent":"'"$AGENT"'"}')
 check "a lowercase chord is normalised" "$R" "any('Control+A' in s for s in d.get('done',[]))"
+
+V=$(act '{"eval":"navigator.language","agent":"'"$AGENT"'"}')
+check "WBROWSER_LANG pins the language" "$V" "d.get('result') == 'ko-KR'"
 
 # 🔴 `wb status` asks whoami.py for the profile; when runtime.json does not describe this
 #    Chrome it reads chrome://version in a tab — and that tab was never closed (73 of 79 tabs

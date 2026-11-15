@@ -363,6 +363,15 @@ Por eso los pasos que parecen enviar / pagar / eliminar se **rechazan**:
 
 La autorización es **por tarea**, no global.
 
+### Ritmo
+
+Las tareas nunca empiezan en punto ni a la vez: cada una arranca 0–10 minutos después de su minuto
+(`"jitterMinutes"`, 0 lo desactiva), el demonio las ejecuta una tras otra y tras cada `goto` se queda
+30–60 s en la página (`"dwellSeconds"`). `"dailyMax": 3` limita las ejecuciones al día (las de más se
+saltan y se registran). `"verifyUrl"` (y opcionalmente `"verifyText"`) se descarga **sin sesión** al
+terminar: la tarea solo cuenta como hecha si el resultado se ve desde fuera. Un paso que encuentra una
+página que necesita a una persona detiene la tarea.
+
 ---
 
 ## ¿Quién está controlando? (indicador visual)
@@ -517,17 +526,31 @@ Esta herramienta controla un navegador que contiene **todas tus sesiones**. Trá
 | `WBROWSER_CDP_PORT` | `9222` | Puerto de depuración de Chrome |
 | `WBROWSER_PORT` | `7981` | Puerto del motor de control |
 | `WBROWSER_PROXY` | — | Envía todo el tráfico por este proxy: `http://host:port` o `socks5://host:port` (pasarela residencial, anclaje de un móvil, un equipo en la línea de casa). Sin usuario/contraseña — Chrome no los usa; autoriza tu IP o usa un reenviador local. Solo se lee al arrancar Chrome. |
+| `WBROWSER_LANG` | — | Fija el idioma en cada arranque de este perfil, p. ej. `ko-KR`: idioma de la interfaz de Chrome y `Accept-Language`. Sin valor: Chrome sigue al sistema. |
 | `WBROWSER_AGENT` | automático | Nombre mostrado en el borde y la pestaña |
 | `WBROWSER_MCP_TOKEN` | — | **Obligatorio** para MCP remoto |
 | `WBROWSER_NOTES` | — | Directorio para registros de trabajo (opcional) |
 
 > 🔵 **Cómo maneja una página, por defecto.** Un clic recorre una trayectoria curva hasta un
 > punto dentro del elemento y se mantiene un instante, como una mano; `type` separa las teclas
-> 50–150 ms al azar; tras `go`, el puntero se desplaza y la página baja un poco y vuelve.
+> 35–140 ms al azar, hace una pausa al final de cada frase, de vez en cuando pulsa una tecla vecina
+> y la borra (nunca en un campo de contraseña) y al final comprueba que el campo contiene
+> exactamente el texto (también coreano); si no, lo reescribe una vez y si no, falla con 422; tras `go`, el puntero se desplaza y la página baja un poco y vuelve.
 > Un `go` a un host `m.` (p. ej. `m.example.com`) presenta la pestaña como un móvil — agente de
 > usuario, client hints, viewport, táctil — antes de que salga la petición; otro host la devuelve.
 > En un navegador headless se quita la marca `HeadlessChrome` de lo que ven las páginas.
 > Siempre activo, sin interruptor (`type --fast` se rechaza): un clic ~0,5 s, 100 caracteres ~10 s.
+> Los elementos fuera de pantalla se alcanzan con la rueda del ratón, y solo se escribe en una
+> pestaña visible (una de fondo se trae al frente; una ventana minimizada se rechaza con 409).
+>
+> 🔴 **Se detiene para una persona.** Un captcha, un segundo factor o un aviso de bloqueo detiene
+> todos los clics, teclas y `eval` de ese comando (un `go` que solo lee solo lo informa) y del siguiente; la respuesta dice `reconnect: true` y el
+> motivo. Termínalo a mano en esa pestaña y vuelve a ejecutar — nada lo resuelve por ti. El inicio
+> de sesión automático rellena un sitio una vez cada 30 minutos; si el formulario vuelve, se entrega igual.
+>
+> 🔵 **Una sola vez.** `wb --idem <clave> click …` se ejecuta como mucho una vez por clave: si se pide
+> de nuevo (p. ej. tras un timeout) devuelve la respuesta de la primera ejecución sin repetir el clic.
+> Los comandos cuya respuesta el motor no guarda (`login`, `take`, `shot`, …) rechazan `--idem` en vez de ignorarlo.
 
 ---
 

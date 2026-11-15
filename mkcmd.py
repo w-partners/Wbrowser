@@ -212,4 +212,8 @@ if __name__ == "__main__":
         origins = [s.strip() for s in scope.split(",") if s.strip()]
         if origins:
             cmd["scope"] = origins
+    # 🔵 --idem (parsed in wb): one key, one run — the engine replays, never repeats.
+    idem_key = os.environ.get("WIN_IDEM", "").strip()
+    if idem_key:
+        cmd["idem"] = idem_key
     print(json.dumps(cmd, ensure_ascii=False))
