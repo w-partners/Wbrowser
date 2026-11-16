@@ -5,6 +5,20 @@ has the detail.
 
 ---
 
+## 0.36.0 — 2026-11-16
+
+- `wb -b <name> restart` closes a named browser's Chrome the way a person would
+  (`Browser.close`, so cookies are written out), starts it again on the same profile and
+  prints the logins before and after (when its engine was answering). The engine is stopped only
+  after Chrome has closed, so a close that fails changes nothing; Node 22+ (built-in WebSocket). A Chrome left up for weeks can hold gigabytes of
+  deleted cache files that the disk only gets back once it closes.
+  It refuses browser 1 (your own Chrome), and refuses a port whose process cannot be shown
+  to run that profile (on WSL with Windows Chrome it cannot, so close the window and `up`).
+  A Chrome that is still running 15s after `Browser.close` is left alone, not killed.
+  It starts Chrome with the current shell's settings, so it refuses when the running Chrome
+  has a different proxy or language (`WBROWSER_PROXY`, `WBROWSER_LANG`) — a proxy is never
+  dropped by a restart.
+
 ## 0.35.0 — 2026-11-16
 
 ### Stops for a person

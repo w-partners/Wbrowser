@@ -530,6 +530,7 @@ wb -b work up        # start it; a window opens, sign into it once
 wb -b work go https://mail.google.com
 wb -b 2 read         # name or number, either works
 wb browsers          # list them
+wb -b work restart   # close its Chrome cleanly (cookies kept), start it again, compare logins
 ```
 
 Tab titles read `[browser-tab]`: `[1-2]` is the second tab of browser 1, `[2-1]` the

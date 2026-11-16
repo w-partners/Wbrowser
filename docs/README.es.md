@@ -450,6 +450,13 @@ O asigna sitios a cuentas en `accounts.json`:
 > 🔴 **Si nombras una cuenta que no está abierta, Wbrowser falla** en lugar de adivinar.
 > Enviar correo desde la cuenta equivocada es peor que un mensaje de error.
 
+> 🔵 **Un navegador abierto durante semanas** puede retener gigabytes de archivos de caché ya borrados —
+> espacio que el disco no recupera mientras sigue abierto.
+> `wb -b <nombre> restart` cierra ese Chrome como lo haría una persona (las cookies se guardan), lo
+> vuelve a abrir con el mismo perfil y muestra los inicios de sesión antes y después. Solo actúa sobre
+> un navegador con nombre y solo si se comprueba que el proceso de su puerto usa ese perfil; en WSL con
+> Chrome de Windows no se puede comprobar y se niega — cierra la ventana y ejecuta `up`.
+
 ---
 
 ## Notas de plataforma

@@ -21,6 +21,7 @@
 #   ./wb take <#>        hand a tab you are on to the agent, so it carries on from there
 #   ./wb release         give that tab back
 #   ./wb down            take down the engine only (Chrome belongs to the user, so we don't touch it)
+#   ./wb -b <name> restart   close a named browser's Chrome cleanly and start it again (same profile)
 #
 # 🔴 This script never kills Chrome. It may be a window the user was using.
 
@@ -981,6 +982,67 @@ if not sites: print('No site remembered for \"%s\" yet. Store one: wb remember %
 else:
     for s in sites: print('  %-30s (used %d×)' % (s['origin'], s['count']))
 "
+    ;;
+  restart)
+    # 🔵 A Chrome left up for weeks keeps deleted cache files open — reported on one machine:
+    #    gigabytes across a few profiles, disk space nobody can free while it runs. This closes
+    #    it the way a person would (Browser.close, so cookies are written out) and starts it
+    #    again on the same profile.
+    # 🔴 Named browsers only: browser 1 is the Chrome the person works in.
+    # 🔴 By port, and only after the process on that port is shown to run this profile —
+    #    never by name, never kill -9 (that skips writing cookies).
+    if [ "$BROWSER_NUM" = 1 ]; then
+      echo "❌ restart is for a named browser (wb -b <name> restart). Browser 1 is your own Chrome — close and reopen it yourself." >&2; exit 2
+    fi
+    PROFILE="${WBROWSER_PROFILE_ROOT:-$HOME/.wbrowser}/$BROWSER_NAME"
+    if _cdp_up; then
+      CPID=$(ss -ltnp 2>/dev/null | grep ":${CDP_PORT} " | grep -oP 'pid=\K[0-9]+' | head -1)
+      if [ -z "$CPID" ] || ! tr '\0' '\n' < "/proc/$CPID/cmdline" 2>/dev/null | grep -qxF -- "--user-data-dir=$PROFILE"; then
+        echo "❌ the Chrome on port $CDP_PORT could not be shown to run $PROFILE — not closing it. Close it by hand, then: wb -b $BROWSER_NAME up" >&2; exit 1
+      fi
+      # 🔴 `up` launches with THIS shell's settings. A proxy or language the running Chrome has
+      #    and this shell lacks would be dropped silently — the account would show up from the
+      #    machine's own IP. The running Chrome's command line is the record (runtime.json is
+      #    shared by every browser, so it cannot say what this one ran with).
+      RAN_PROXY=$(tr '\0' '\n' < "/proc/$CPID/cmdline" | sed -n 's/^--proxy-server=//p' | head -1)
+      RAN_LANG=$(tr '\0' '\n' < "/proc/$CPID/cmdline" | sed -n 's/^--lang=//p' | head -1)
+      # Same rules as launch.js (scheme, no credentials) — a value launch.js would refuse must
+      # stop the restart here, before Chrome is closed, not after.
+      WANT_PROXY=$(node -e "const r=(process.env.WBROWSER_PROXY||'').trim();if(r){let u;try{u=new URL(r)}catch{u=null}
+if(!u||!/^(https?|socks[45]):$/.test(u.protocol)||!u.hostname||u.username||u.password){console.error('WBROWSER_PROXY is not one launch.js accepts (http/https/socks4/socks5, no username/password)');process.exit(1)}
+process.stdout.write(u.protocol+'//'+u.host)}") \
+        || { echo "❌ not restarting — fix WBROWSER_PROXY first; Chrome and its engine are untouched" >&2; exit 1; }
+      WANT_LANG=$(printf '%s' "${WBROWSER_LANG:-}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+      if [ "$RAN_PROXY" != "$WANT_PROXY" ] || [ "$RAN_LANG" != "$WANT_LANG" ]; then
+        echo "❌ not restarting: this Chrome runs with proxy '${RAN_PROXY:-none}' and language '${RAN_LANG:-default}'," >&2
+        echo "   but this shell would start it with proxy '${WANT_PROXY:-none}' and language '${WANT_LANG:-default}'." >&2
+        echo "   Run it with the same settings, e.g.: WBROWSER_PROXY='${RAN_PROXY}' WBROWSER_LANG='${RAN_LANG}' wb -b $BROWSER_NAME restart" >&2
+        exit 1
+      fi
+      # Logins come from the engine; without one there is nothing to compare — said, not skipped.
+      BEFORE=$("$0" -b "$BROWSER_NAME" logins 2>/dev/null | grep -E 'cookies|^ +[0-9]+ ') \
+        || echo "🔵 the engine was not answering — logins are not compared before and after"
+      # 🔴 Chrome first, the engine only once Chrome is gone: a close that fails must leave
+      #    this browser exactly as it was (agents and crons are using its engine).
+      node -e "if(typeof WebSocket!=='function'){console.error('this Node has no built-in WebSocket (Node 22+ needed)');process.exit(1)}
+setTimeout(()=>process.exit(1),10000);
+fetch('$CDP/json/version').then(r=>r.json()).then(v=>{const w=new WebSocket(v.webSocketDebuggerUrl);w.onopen=()=>w.send(JSON.stringify({id:1,method:'Browser.close'}));w.onmessage=w.onclose=()=>process.exit(0)}).catch(()=>process.exit(1))" \
+        || { echo "❌ Chrome on port $CDP_PORT could not be sent Browser.close — nothing was changed (Chrome and its engine still run)" >&2; exit 1; }
+      for _ in $(seq 1 30); do kill -0 "$CPID" 2>/dev/null || break; sleep 0.5; done
+      if kill -0 "$CPID" 2>/dev/null; then
+        echo "❌ Chrome (pid $CPID) is still running 15s after Browser.close — left alone, not killed, engine untouched. Check it, then: wb -b $BROWSER_NAME restart" >&2; exit 1
+      fi
+      echo "· Chrome on port $CDP_PORT closed"
+      "$0" -b "$BROWSER_NAME" down >/dev/null      # its engine held a dead connection — start it fresh
+    else
+      echo "· Chrome was not running"; BEFORE=""
+    fi
+    "$0" -b "$BROWSER_NAME" up || exit 1
+    if [ -n "$BEFORE" ]; then
+      echo "── logins before ──"; printf '%s\n' "$BEFORE"
+      echo "── logins after ──";  "$0" -b "$BROWSER_NAME" logins
+      echo "🔵 A site with fewer cookies after kept its login only in session cookies — sign in to it once by hand."
+    fi
     ;;
   down)
     # 🔴 Kill by PORT, never by name. `pgrep -f 'node .*engine\.js'` matches EVERY engine on

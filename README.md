@@ -565,6 +565,13 @@ Or map sites to accounts in `accounts.json`:
 > 🔴 If you name an account that isn't open, Wbrowser **fails** instead of guessing.
 > Sending mail from the wrong account is worse than an error message.
 
+> 🔵 **A browser left up for weeks** can hold on to gigabytes of deleted cache files — space
+> the disk cannot get back while it runs.
+> `wb -b <name> restart` closes that Chrome the way a person would (cookies are written out),
+> starts it again on the same profile, and prints the logins before and after. It only acts
+> on a named browser, and only once the process on its port is shown to run that profile; on
+> WSL with Windows Chrome that cannot be shown, so it refuses — close the window and run `up`.
+
 ---
 
 ## Platform notes
