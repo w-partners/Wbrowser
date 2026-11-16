@@ -984,8 +984,8 @@ else:
 "
     ;;
   restart)
-    # 🔵 A Chrome left up for weeks keeps deleted cache files open — reported on one machine:
-    #    gigabytes across a few profiles, disk space nobody can free while it runs. This closes
+    # 🔵 A Chrome left up for weeks keeps deleted cache files open —
+    #    disk space nobody can free while it runs. This closes
     #    it the way a person would (Browser.close, so cookies are written out) and starts it
     #    again on the same profile.
     # 🔴 Named browsers only: browser 1 is the Chrome the person works in.

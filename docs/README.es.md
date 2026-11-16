@@ -450,7 +450,7 @@ O asigna sitios a cuentas en `accounts.json`:
 > 🔴 **Si nombras una cuenta que no está abierta, Wbrowser falla** en lugar de adivinar.
 > Enviar correo desde la cuenta equivocada es peor que un mensaje de error.
 
-> 🔵 **Un navegador abierto durante semanas** puede retener gigabytes de archivos de caché ya borrados —
+> 🔵 **Un navegador abierto durante semanas** mantiene abiertos archivos de caché ya borrados —
 > espacio que el disco no recupera mientras sigue abierto.
 > `wb -b <nombre> restart` cierra ese Chrome como lo haría una persona (las cookies se guardan), lo
 > vuelve a abrir con el mismo perfil y muestra los inicios de sesión antes y después. Solo actúa sobre

@@ -5,13 +5,19 @@ has the detail.
 
 ---
 
+## 0.36.1 — 2026-11-16
+
+- Docs: the `restart` note no longer says a long-running Chrome holds "gigabytes" of deleted
+  cache files. That size was not measured; the note now says only that the files stay open
+  until Chrome closes.
+
 ## 0.36.0 — 2026-11-16
 
 - `wb -b <name> restart` closes a named browser's Chrome the way a person would
   (`Browser.close`, so cookies are written out), starts it again on the same profile and
   prints the logins before and after (when its engine was answering). The engine is stopped only
-  after Chrome has closed, so a close that fails changes nothing; Node 22+ (built-in WebSocket). A Chrome left up for weeks can hold gigabytes of
-  deleted cache files that the disk only gets back once it closes.
+  after Chrome has closed, so a close that fails changes nothing; Node 22+ (built-in WebSocket). A Chrome left up for weeks keeps
+  deleted cache files open; the disk gets that space back only once it closes.
   It refuses browser 1 (your own Chrome), and refuses a port whose process cannot be shown
   to run that profile (on WSL with Windows Chrome it cannot, so close the window and `up`).
   A Chrome that is still running 15s after `Browser.close` is left alone, not killed.
